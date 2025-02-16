@@ -1,0 +1,45 @@
+---
+description: This is a Next.js 15 web application using React 19, TypeScript 5, and Tailwind CSS for UI. The project follows ESLint and Prettier formatting rules and uses the new App Router (not the Pages Router). API routes exist under /api/. AI suggestions should align with our existing stack, avoid unnecessary dependencies, and ensure proper TypeScript typing. Keep imports relative instead of using path aliases.
+globs: 
+---
+
+# Your rule content
+
+{
+  "description": "This is a Next.js 15 web application using React 19, TypeScript 5, and Tailwind CSS for UI. The project follows ESLint and Prettier formatting rules and uses the new App Router (not the Pages Router). API routes exist under /api/. AI suggestions should align with our existing stack, avoid unnecessary dependencies, and ensure proper TypeScript typing. Keep imports relative instead of using path aliases.",
+  
+  "projectTechStack": {
+    "frontend": {
+      "framework": "Next.js 15",
+      "reactVersion": 19,
+      "typescriptVersion": 5,
+      "tailwind": true,
+      "eslint": true,
+      "prettier": true,
+      "useRelativeImports": true
+    }
+  },
+
+  "aiRules": [
+    "Don't add libraries we haven't approved.",
+    "Adhere to ESLint config in 'eslint.config.mjs'.",
+    "Use Prettier styling from '.prettierrc'.",
+    "Keep imports relative, no new path aliases.",
+    "Use Next.js 15 App Router (app directory) instead of the Pages Router.",
+    "Follow Tailwind CSS best practices. Avoid inline styles in JSX.",
+    "For API routes, ensure correct HTTP methods and middleware usage.",
+    "Use TypeScript for all new files, enforce strong typings, and avoid 'any'."
+  ],
+
+  "globs": {
+    "*.tsx": ["Use TypeScript, ensure strong typings, and follow ESLint rules."],
+    "*.ts": ["Follow TypeScript best practices and ensure type safety."],
+    "*.js": ["Convert JavaScript to TypeScript where possible."],
+    "*.json": ["Follow JSON formatting standards (Prettier)."],
+    "app/**/*.tsx": ["Use Next.js App Router conventions, including layouts and page.tsx files."],
+    "api/**/*.ts": ["Follow Next.js API Route standards. Ensure proper HTTP method handling and middleware."],
+    "components/**/*.tsx": ["Keep components modular, use Tailwind for styling, and avoid inline styles."],
+    "utils/**/*.ts": ["Write pure functions, avoid dependencies unless necessary, and ensure proper TypeScript typings."]
+  }
+}
+

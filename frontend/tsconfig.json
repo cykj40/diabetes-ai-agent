@@ -4,12 +4,15 @@
     // Target modern JavaScript features. 'ESNext' is common, but you can adjust if you need older browser support.
     "target": "ESNext",
     // Include DOM libraries plus modern JS features.
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     // Use ES modules (recommended for Next.js).
     "module": "ESNext",
     // Determine how modules are resolved. 'NodeNext' is a good fit for modern Node, but 'node' is also common.
     "moduleResolution": "node",
-
     // ****************************
     //   Strictness & Quality
     // ****************************
@@ -19,13 +22,11 @@
     "forceConsistentCasingInFileNames": true,
     // Skips type-checking in your node_modules. Speeds up builds without usually harming correctness.
     "skipLibCheck": true,
-
     // ****************************
     //   JSX / React Settings
     // ****************************
     // For Next.js, 'preserve' is usually recommended so Next can handle transforming your JSX.
     "jsx": "preserve",
-
     // ****************************
     //   Other Helpful Flags
     // ****************************
@@ -39,9 +40,14 @@
     // Allows default imports from modules with no default export. Helps avoid many friction points in TS.
     "esModuleInterop": true,
     // Support importing JSON files directly.
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
   },
-
   // ************************************
   //   Specify Which Files to Include
   // ************************************
@@ -55,6 +61,7 @@
     ".next/types/**/*.ts"
   ],
   // Exclude node_modules to speed up compilation
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }
-

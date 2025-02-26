@@ -1,1 +1,0 @@
-const dbResult = await healthDataQueries.createHealthData(userId!, dataType, value) as unknown as HealthData; 

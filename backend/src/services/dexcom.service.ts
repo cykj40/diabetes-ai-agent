@@ -131,9 +131,9 @@ export class DexcomService {
         try {
             const issuer = new Issuer({
                 issuer: this.apiUrl,
-                authorization_endpoint: `${this.apiUrl}/v3/oauth2/login`,
-                token_endpoint: `${this.apiUrl}/v3/oauth2/token`,
-                userinfo_endpoint: `${this.apiUrl}/v3/users/self/egvs`
+                authorization_endpoint: `${this.apiUrl}/v2/oauth2/login`,
+                token_endpoint: `${this.apiUrl}/v2/oauth2/token`,
+                userinfo_endpoint: `${this.apiUrl}/v2/users/self/egvs`
             });
 
             this.client = new issuer.Client({

@@ -51,6 +51,8 @@ export default function AIChat() {
         setIsLoading(true);
 
         try {
+            console.log('Sending message to API:', input);
+
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
@@ -59,13 +61,18 @@ export default function AIChat() {
                 body: JSON.stringify({ message: input }),
             });
 
+            const data = await response.json();
+            console.log('API response:', data);
+
             if (!response.ok) {
-                throw new Error('Failed to get response');
+                throw new Error(data.details || data.error || 'Failed to get response');
             }
 
-            const data = await response.json();
+            if (!data.text && !data.message) {
+                console.error('Invalid response format:', data);
+                throw new Error('Invalid response format from server');
+            }
 
-            // Check if the response includes chart data
             const aiMessage: Message = {
                 id: (Date.now() + 1).toString(),
                 text: data.text || data.message,
@@ -76,10 +83,12 @@ export default function AIChat() {
 
             setMessages(prev => [...prev, aiMessage]);
         } catch (error) {
-            console.error('Error:', error);
+            console.error('Error in sendMessage:', error);
             setMessages(prev => [...prev, {
                 id: (Date.now() + 1).toString(),
-                text: 'Sorry, I encountered an error while processing your request.',
+                text: error instanceof Error
+                    ? `Error: ${error.message}`
+                    : 'Sorry, I encountered an error while processing your request.',
                 sender: 'ai',
                 timestamp: new Date().toLocaleTimeString()
             }]);
@@ -112,8 +121,8 @@ export default function AIChat() {
                             <div className={`flex flex-col space-y-1 ${message.sender === 'user' ? 'items-end' : 'items-start'
                                 }`}>
                                 <div className={`rounded-lg p-3 ${message.sender === 'user'
-                                        ? 'bg-blue-500 text-white'
-                                        : 'bg-white text-gray-800 shadow-sm'
+                                    ? 'bg-blue-500 text-white'
+                                    : 'bg-white text-gray-800 shadow-sm'
                                     }`}>
                                     <p className="text-sm whitespace-pre-wrap">{message.text}</p>
                                 </div>

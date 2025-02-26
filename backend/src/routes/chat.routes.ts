@@ -19,6 +19,7 @@ interface ChartData {
 
 router.post('/', async (req, res) => {
     try {
+        console.log('Received chat request:', req.body);
         const { message } = req.body;
 
         if (!message) {
@@ -26,7 +27,19 @@ router.post('/', async (req, res) => {
         }
 
         // Get recent readings for context
-        const recentReadings = await dexcomService.getLatestReadings(48); // Get last 4 hours of readings
+        console.log('Fetching recent readings...');
+        let recentReadings: DexcomReading[] = [];
+        try {
+            recentReadings = await dexcomService.getLatestReadings(48); // Get last 4 hours of readings
+            console.log('Successfully retrieved readings (real or mock):',
+                `Count: ${recentReadings.length}`,
+                `Latest value: ${recentReadings[0]?.value}`,
+                `Latest trend: ${recentReadings[0]?.trend}`
+            );
+        } catch (error) {
+            console.error('Error getting readings, proceeding with empty readings:', error);
+            recentReadings = [];
+        }
 
         // Add readings context to the message
         const contextMessage = `
@@ -34,13 +47,23 @@ router.post('/', async (req, res) => {
             Recent Blood Sugar Readings: ${JSON.stringify(recentReadings)}
         `;
 
+        console.log('Sending message to agent with context length:', contextMessage.length);
         const response = await agent.ask(contextMessage);
+        console.log('Received agent response');
+
+        if (!response || !response.output) {
+            console.error('Invalid response from agent:', response);
+            throw new Error('Invalid response from agent');
+        }
+
         const agentResponse = response.output;
+        console.log('Agent response length:', agentResponse.length);
 
         // Check if the message is requesting data visualization
         const shouldGenerateChart = /chart|graph|plot|trend|pattern|visualization/i.test(message);
 
         if (shouldGenerateChart && recentReadings.length > 0) {
+            console.log('Generating chart data...');
             // Process readings for visualization
             const chartData: ChartData = {
                 type: 'line',
@@ -60,6 +83,7 @@ router.post('/', async (req, res) => {
 
             // If the message specifically asks for time of day patterns
             if (/time.of.day|daily.pattern|hour|daytime/i.test(message)) {
+                console.log('Generating time of day analysis...');
                 chartData.type = 'timeOfDay';
                 // Group readings by hour
                 const hourlyData = new Array(24).fill(0).map(() => ({ sum: 0, count: 0 }));
@@ -76,18 +100,28 @@ router.post('/', async (req, res) => {
                 chartData.title = 'Average Blood Sugar by Time of Day';
             }
 
-            res.json({
-                message: agentResponse,
-                chartData
+            console.log('Sending response with chart data');
+            return res.json({
+                text: agentResponse,
+                chartData,
+                usingMockData: !dexcomService.isAuthenticated
             });
         } else {
-            res.json({
-                message: agentResponse
+            console.log('Sending response without chart data');
+            return res.json({
+                text: agentResponse,
+                usingMockData: !dexcomService.isAuthenticated
             });
         }
     } catch (error) {
         console.error('Error in chat route:', error);
-        res.status(500).json({ error: 'Failed to process chat request' });
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        console.error('Error details:', errorMessage);
+        console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+        return res.status(500).json({
+            error: 'Failed to process chat request',
+            details: errorMessage
+        });
     }
 });
 

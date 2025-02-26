@@ -1,5 +1,5 @@
 import axios from 'axios';
-import crypto from 'crypto';
+import { Issuer, Client, generators, TokenSet } from 'openid-client';
 
 export interface DexcomReading {
     value: number;
@@ -116,137 +116,182 @@ export class DexcomService {
     private readonly clientId: string;
     private readonly clientSecret: string;
     private readonly redirectUri: string;
-    private accessToken: string | null = null;
+    private client: Client | null = null;
+    private tokenSet: TokenSet | null = null;
 
     constructor() {
-        console.log('Raw environment variables:');
-        console.log('process.env.DEXCOM_API_URL =', process.env.DEXCOM_API_URL);
-        console.log('process.env.DEXCOM_CLIENT_ID =', process.env.DEXCOM_CLIENT_ID);
-        console.log('process.env.DEXCOM_CLIENT_SECRET =', process.env.DEXCOM_CLIENT_SECRET);
-        console.log('process.env.DEXCOM_REDIRECT_URI =', process.env.DEXCOM_REDIRECT_URI);
-
-        this.apiUrl = process.env.DEXCOM_API_URL || 'https://api.dexcom.com/v2';
+        this.apiUrl = process.env.DEXCOM_API_URL || 'https://sandbox-api.dexcom.com';
         this.clientId = process.env.DEXCOM_CLIENT_ID || '';
         this.clientSecret = process.env.DEXCOM_CLIENT_SECRET || '';
-        this.redirectUri = process.env.DEXCOM_REDIRECT_URI || 'http://localhost:3000/auth/dexcom/callback';
-
-        console.log('\nAssigned values:');
-        console.log('this.apiUrl =', this.apiUrl);
-        console.log('this.clientId =', this.clientId);
-        console.log('this.clientSecret =', this.clientSecret ? '[PRESENT]' : '[MISSING]');
-        console.log('this.redirectUri =', this.redirectUri);
-
-        if (!this.clientId || !this.clientSecret) {
-            console.error('Missing credentials:', {
-                hasClientId: !!this.clientId,
-                hasClientSecret: !!this.clientSecret
-            });
-            throw new Error('Dexcom API credentials are required');
-        }
+        this.redirectUri = process.env.DEXCOM_REDIRECT_URI || 'http://localhost:3001/auth/dexcom/callback';
+        this.initializeClient();
     }
 
-    getAuthorizationUrl(state: string): string {
-        const params = new URLSearchParams({
-            response_type: 'code',
-            client_id: this.clientId,
-            redirect_uri: this.redirectUri,
-            state: state,
-            scope: 'offline_access'
-        });
-        return `${this.apiUrl}/oauth2/login?${params.toString()}`;
-    }
-
-    async exchangeCodeForToken(code: string): Promise<DexcomTokens> {
+    private async initializeClient() {
         try {
-            const response = await axios.post(`${this.apiUrl}/oauth2/token`, {
-                grant_type: 'authorization_code',
-                code: code,
+            const issuer = new Issuer({
+                issuer: this.apiUrl,
+                authorization_endpoint: `${this.apiUrl}/v3/oauth2/login`,
+                token_endpoint: `${this.apiUrl}/v3/oauth2/token`,
+                userinfo_endpoint: `${this.apiUrl}/v3/users/self/egvs`
+            });
+
+            this.client = new issuer.Client({
                 client_id: this.clientId,
                 client_secret: this.clientSecret,
-                redirect_uri: this.redirectUri
+                redirect_uris: [this.redirectUri],
+                response_types: ['code'],
+                token_endpoint_auth_method: 'client_secret_post'
             });
-            this.accessToken = response.data.access_token;
-            return response.data;
+
+            console.log('DexcomService initialized with OpenID client');
         } catch (error) {
-            console.error('Failed to exchange code for token:', error);
-            throw new Error('Token exchange failed');
+            console.error('Failed to initialize OpenID client:', error);
+            throw error;
         }
     }
 
-    async refreshToken(refreshToken: string): Promise<DexcomTokens> {
+    get isAuthenticated(): boolean {
+        return this.tokenSet !== null && !this.tokenSet.expired();
+    }
+
+    async getAuthUrl(): Promise<{ url: string, codeVerifier: string, state: string }> {
+        if (!this.client) {
+            await this.initializeClient();
+        }
+
+        const codeVerifier = generators.codeVerifier();
+        const codeChallenge = generators.codeChallenge(codeVerifier);
+        const state = generators.state();
+
+        const url = this.client!.authorizationUrl({
+            scope: 'offline_access',
+            code_challenge: codeChallenge,
+            code_challenge_method: 'S256',
+            state
+        });
+
+        return { url, codeVerifier, state };
+    }
+
+    async handleCallback(code: string, codeVerifier: string, state: string): Promise<boolean> {
         try {
-            const response = await axios.post(`${this.apiUrl}/oauth2/token`, {
-                grant_type: 'refresh_token',
-                refresh_token: refreshToken,
-                client_id: this.clientId,
-                client_secret: this.clientSecret,
-                redirect_uri: this.redirectUri
-            });
-            this.accessToken = response.data.access_token;
-            return response.data;
+            if (!this.client) {
+                await this.initializeClient();
+            }
+
+            this.tokenSet = await this.client.callback(
+                this.redirectUri,
+                { code, state },
+                { code_verifier: codeVerifier }
+            );
+
+            console.log('Successfully authenticated with Dexcom API');
+            return true;
+        } catch (error) {
+            console.error('Failed to exchange auth code:', error);
+            this.tokenSet = null;
+            return false;
+        }
+    }
+
+    async refreshToken(): Promise<boolean> {
+        try {
+            if (!this.client || !this.tokenSet?.refresh_token) {
+                return false;
+            }
+
+            this.tokenSet = await this.client.refresh(this.tokenSet.refresh_token);
+            return true;
         } catch (error) {
             console.error('Failed to refresh token:', error);
-            throw new Error('Token refresh failed');
+            this.tokenSet = null;
+            return false;
         }
     }
 
-    private async authenticate() {
+    private async ensureValidToken(): Promise<boolean> {
+        if (!this.isAuthenticated && this.tokenSet?.refresh_token) {
+            return this.refreshToken();
+        }
+        return this.isAuthenticated;
+    }
+
+    async getLatestReadings(count: number = 48): Promise<DexcomReading[]> {
         try {
-            const response = await axios.post(`${this.apiUrl}/oauth2/token`, {
-                grant_type: 'client_credentials',
-                client_id: this.clientId,
-                client_secret: this.clientSecret,
-                scope: 'offline_access'
-            });
-            this.accessToken = response.data.access_token;
+            const hasValidToken = await this.ensureValidToken();
+            console.log('Token status:', hasValidToken ? 'Valid' : 'Invalid/Missing');
+
+            if (hasValidToken && this.tokenSet) {
+                console.log('Fetching real Dexcom data...');
+                const endDate = new Date();
+                const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+
+                const response = await axios.get(`${this.apiUrl}/v3/users/self/egvs`, {
+                    headers: {
+                        'Authorization': `Bearer ${this.tokenSet.access_token}`
+                    },
+                    params: {
+                        startDate: startDate.toISOString(),
+                        endDate: endDate.toISOString()
+                    }
+                });
+
+                return response.data.records.map((record: any) => ({
+                    value: record.value,
+                    trend: record.trend,
+                    timestamp: record.timestamp
+                }));
+            }
+
+            return this.generateMockReadings(count);
         } catch (error) {
-            console.error('Failed to authenticate with Dexcom API:', error);
-            throw new Error('Authentication failed');
+            console.error('Error in getLatestReadings:', error);
+            return this.generateMockReadings(count);
         }
     }
 
-    async getEgvs(startDate: Date, endDate: Date): Promise<DexcomReading[]> {
-        if (!this.accessToken) {
-            await this.authenticate();
-        }
+    private generateMockReadings(count: number): DexcomReading[] {
+        console.log('Generating mock blood sugar data');
+        const mockReadings: DexcomReading[] = [];
+        const now = new Date();
 
-        try {
-            const response = await axios.get(`${this.apiUrl}/users/self/egvs`, {
-                headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
-                },
-                params: {
-                    startDate: startDate.toISOString(),
-                    endDate: endDate.toISOString()
-                }
+        for (let i = 0; i < count; i++) {
+            const timestamp = new Date(now.getTime() - (i * 5 * 60 * 1000));
+            const baseValue = 140;
+            const variation = Math.sin(i / 12) * 30;
+            const randomness = (Math.random() - 0.5) * 20;
+            const value = Math.round(baseValue + variation + randomness);
+
+            let trend: string;
+            if (i === 0 || mockReadings.length === 0) {
+                trend = 'Stable';
+            } else {
+                const prevValue = mockReadings[mockReadings.length - 1].value;
+                if (value > prevValue + 10) trend = 'Rising';
+                else if (value < prevValue - 10) trend = 'Falling';
+                else trend = 'Stable';
+            }
+
+            mockReadings.push({
+                value,
+                trend,
+                timestamp: timestamp.toISOString()
             });
-
-            return response.data.records.map((record: any) => ({
-                value: record.value,
-                trend: record.trend,
-                timestamp: record.timestamp
-            }));
-        } catch (error) {
-            console.error('Failed to fetch Dexcom readings:', error);
-            throw new Error('Failed to fetch blood sugar readings');
         }
-    }
 
-    async getLatestReadings(count: number = 24): Promise<DexcomReading[]> {
-        const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000)); // count * 5 minutes in ms
-        return this.getEgvs(startDate, endDate);
+        return mockReadings.reverse();
     }
 
     async getAlerts(startDate: Date, endDate: Date): Promise<DexcomAlert[]> {
-        if (!this.accessToken) {
-            await this.authenticate();
+        if (!this.tokenSet) {
+            await this.ensureValidToken();
         }
 
         try {
             const response = await axios.get<AlertsResponse>(`${this.apiUrl}/users/self/alerts`, {
                 headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
+                    'Authorization': `Bearer ${this.tokenSet.access_token}`
                 },
                 params: {
                     startDate: startDate.toISOString(),
@@ -268,27 +313,27 @@ export class DexcomService {
     }
 
     async getDevices(): Promise<DexcomDevice[]> {
-        if (!this.accessToken) {
-            await this.authenticate();
+        if (!await this.ensureValidToken()) {
+            return [];
         }
 
         try {
-            const response = await axios.get<DevicesResponse>(`${this.apiUrl}/users/self/devices`, {
+            const response = await axios.get<DevicesResponse>(`${this.apiUrl}/v3/users/self/devices`, {
                 headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 }
             });
 
             return response.data.records;
         } catch (error) {
             console.error('Failed to fetch Dexcom devices:', error);
-            throw new Error('Failed to fetch devices');
+            return [];
         }
     }
 
     async getDataRange(lastSyncTime?: Date): Promise<DataRangeResponse> {
-        if (!this.accessToken) {
-            await this.authenticate();
+        if (!this.tokenSet) {
+            await this.ensureValidToken();
         }
 
         try {
@@ -299,7 +344,7 @@ export class DexcomService {
 
             const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/users/self/dataRange`, {
                 headers: {
-                    'Authorization': `Bearer ${this.accessToken}`
+                    'Authorization': `Bearer ${this.tokenSet.access_token}`
                 },
                 params
             });

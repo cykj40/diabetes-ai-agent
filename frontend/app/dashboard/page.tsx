@@ -1,8 +1,11 @@
+'use client';
+
 import { UserButton } from "@clerk/nextjs";
 import GlucoseChart from "../../components/GlucoseChart";
 import AIChat from "../../components/AIChat";
-import { BsGraphUp, BsRobot, BsClock, BsBell } from 'react-icons/bs';
-import { FiSettings } from 'react-icons/fi';
+import DexcomStatus from "../../components/DexcomStatus";
+import { BsGraphUp, BsBell } from 'react-icons/bs';
+import { FiSettings, FiActivity } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
 
 export default function Dashboard() {
@@ -16,6 +19,7 @@ export default function Dashboard() {
                         <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 text-transparent bg-clip-text">
                             DiabetesAI Assistant
                         </h1>
+                        <DexcomStatus />
                     </div>
                     <div className="flex items-center space-x-6">
                         <button className="text-gray-600 hover:text-blue-600">
@@ -44,17 +48,17 @@ export default function Dashboard() {
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-semibold text-gray-800">Daily Average</h3>
-                            <BsClock className="text-purple-600 text-xl" />
+                            <FiActivity className="text-green-600 text-xl" />
                         </div>
-                        <div className="text-3xl font-bold text-purple-600">135 mg/dL</div>
+                        <div className="text-3xl font-bold text-green-600">135 mg/dL</div>
                         <div className="text-sm text-gray-500 mt-2">Last 24 hours</div>
                     </div>
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                         <div className="flex items-center justify-between mb-4">
                             <h3 className="text-lg font-semibold text-gray-800">Time in Range</h3>
-                            <BsRobot className="text-green-600 text-xl" />
+                            <RiPulseLine className="text-purple-600 text-xl" />
                         </div>
-                        <div className="text-3xl font-bold text-green-600">75%</div>
+                        <div className="text-3xl font-bold text-purple-600">75%</div>
                         <div className="text-sm text-gray-500 mt-2">Target: 70-180 mg/dL</div>
                     </div>
                 </div>

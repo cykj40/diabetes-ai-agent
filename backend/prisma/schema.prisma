@@ -1,0 +1,31 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model ChatMessage {
+    id        String   @id @default(uuid())
+    sessionId String
+    type      String // 'human' or 'ai'
+    content   String
+    timestamp DateTime @default(now())
+
+    @@index([sessionId])
+}
+
+model BloodSugarReading {
+    id        String   @id @default(uuid())
+    sessionId String
+    value     Float
+    trend     String
+    timestamp DateTime
+    analyzed  Boolean  @default(false)
+    analysis  Json? // Stores the AI analysis results
+
+    @@index([sessionId])
+    @@index([timestamp])
+}

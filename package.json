@@ -2,12 +2,16 @@
   "name": "diabetes-ai-agent",
   "version": "1.0.0",
   "description": "A diabetes assistance to help with your day to day diabetes related tasks",
+  "main": "index.js",
   "scripts": {
     "frontend:dev": "cd frontend && npm run dev",
     "backend:dev": "cd backend && npm run dev",
     "dev": "concurrently \"npm run frontend:dev\" \"npm run backend:dev\"",
     "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "devDependencies": {
     "concurrently": "^8.2.2"
   }

@@ -37,6 +37,8 @@ export default function DexcomStatus() {
     }, []);
 
     const handleDexcomLogin = () => {
+        // Direct the user to the backend's Dexcom login endpoint
+        console.log('Redirecting to Dexcom login...');
         window.location.href = 'http://localhost:3001/auth/dexcom/login';
     };
 
@@ -71,14 +73,14 @@ export default function DexcomStatus() {
                     {isAuthenticated ? 'Dexcom Connected' : 'Dexcom Disconnected'}
                 </span>
             </div>
-            {!isAuthenticated && (
-                <button
-                    onClick={handleDexcomLogin}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-                >
-                    Connect Dexcom
-                </button>
-            )}
+
+            {/* Always show a button - either Connect or Reconnect */}
+            <button
+                onClick={handleDexcomLogin}
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+                {isAuthenticated ? 'Reconnect Dexcom' : 'Connect Dexcom'}
+            </button>
         </div>
     );
 } 

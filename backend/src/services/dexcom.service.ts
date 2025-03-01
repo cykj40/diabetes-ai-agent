@@ -134,11 +134,17 @@ export class DexcomService {
 
     private async loadTokenFromDatabase() {
         try {
+            console.log('Attempting to load token from database for user:', this.userId);
             const tokenRecord = await this.prisma.dexcomToken.findUnique({
                 where: { userId: this.userId }
             });
 
             if (tokenRecord) {
+                console.log('Found token record in database');
+                console.log('Access token (first 10 chars):', tokenRecord.accessToken.substring(0, 10) + '...');
+                console.log('Has refresh token:', !!tokenRecord.refreshToken);
+                console.log('Token expires at:', tokenRecord.expiresAt);
+
                 // Create a TokenSet from the database record
                 this.tokenSet = new TokenSet({
                     access_token: tokenRecord.accessToken,
@@ -146,7 +152,10 @@ export class DexcomService {
                     expires_at: Math.floor(tokenRecord.expiresAt.getTime() / 1000)
                 });
 
-                console.log('Loaded token from database');
+                console.log('Successfully loaded token from database');
+                console.log('Token expired:', this.tokenSet.expired());
+            } else {
+                console.log('No token record found in database');
             }
         } catch (error) {
             console.error('Failed to load token from database:', error);
@@ -408,34 +417,76 @@ export class DexcomService {
 
     async getLatestReadings(count: number = 48): Promise<DexcomReading[]> {
         try {
+            console.log('Starting getLatestReadings...');
+            console.log('Is authenticated before token check:', this.isAuthenticated);
+            console.log('Has tokenSet:', !!this.tokenSet);
+            if (this.tokenSet) {
+                console.log('Token expires at:', this.tokenSet.expires_at);
+                console.log('Token expired:', this.tokenSet.expired());
+                console.log('Has refresh token:', !!this.tokenSet.refresh_token);
+            }
+
             const hasValidToken = await this.ensureValidToken();
-            console.log('Token status:', hasValidToken ? 'Valid' : 'Invalid/Missing');
+            console.log('Token status after ensureValidToken:', hasValidToken ? 'Valid' : 'Invalid/Missing');
 
             if (hasValidToken && this.tokenSet) {
                 console.log('Fetching real Dexcom data...');
-                const endDate = new Date();
+                console.log('API URL:', this.apiUrl);
+
+                // Get current date and ensure it's not in the future
+                const now = new Date();
+                const currentTime = new Date();
+                // Check if date is in the future and adjust if needed
+                if (now > new Date(Date.now() + 86400000)) { // If more than 1 day in the future
+                    console.log('System date appears to be in the future, using current timestamp instead');
+                    now.setTime(Date.now());
+                }
+
+                const endDate = now;
                 const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
 
-                const response = await axios.get(`${this.apiUrl}/v2/users/self/egvs`, {
-                    headers: {
-                        'Authorization': `Bearer ${this.tokenSet.access_token}`
-                    },
-                    params: {
-                        startDate: startDate.toISOString(),
-                        endDate: endDate.toISOString()
-                    }
+                console.log('Current time from Date.now():', new Date(Date.now()).toISOString());
+                console.log('Using date range:', {
+                    startDate: startDate.toISOString(),
+                    endDate: endDate.toISOString()
                 });
 
-                return response.data.records.map((record: any) => ({
-                    value: record.value,
-                    trend: record.trend,
-                    timestamp: record.timestamp
-                }));
-            }
+                try {
+                    const response = await axios.get(`${this.apiUrl}/v2/users/self/egvs`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.tokenSet.access_token}`
+                        },
+                        params: {
+                            startDate: startDate.toISOString(),
+                            endDate: endDate.toISOString()
+                        }
+                    });
 
-            return this.generateMockReadings(count);
+                    console.log('Dexcom API response status:', response.status);
+                    console.log('Response has data:', !!response.data);
+                    console.log('Response has records:', !!response.data.records);
+                    console.log('Number of records:', response.data.records ? response.data.records.length : 0);
+
+                    return response.data.records.map((record: any) => ({
+                        value: record.value,
+                        trend: record.trend,
+                        timestamp: record.timestamp
+                    }));
+                } catch (apiError: any) {
+                    console.error('Error calling Dexcom API:', apiError.message);
+                    if (apiError.response) {
+                        console.error('Response status:', apiError.response.status);
+                        console.error('Response data:', apiError.response.data);
+                    }
+                    throw apiError; // Re-throw to be caught by the outer catch
+                }
+            } else {
+                console.log('No valid token available, falling back to mock data');
+                return this.generateMockReadings(count);
+            }
         } catch (error) {
             console.error('Error in getLatestReadings:', error);
+            console.log('Falling back to mock data due to error');
             return this.generateMockReadings(count);
         }
     }

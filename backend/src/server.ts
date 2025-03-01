@@ -16,6 +16,14 @@ import path from 'path';
 import fs from 'fs';
 import { DexcomService } from './services/dexcom.service';
 
+// Extend the Session interface to include our custom properties
+declare module '@fastify/session' {
+    interface SessionData {
+        codeVerifier?: string;
+        state?: string;
+    }
+}
+
 // Configure dotenv
 const envPath = path.join(__dirname, '..', '.env');
 console.log('Current working directory:', process.cwd());
@@ -134,8 +142,8 @@ app.get('/auth/dexcom/login', async (request: FastifyRequest, reply: FastifyRepl
         const { url, codeVerifier, state } = await dexcomService.getAuthUrl();
 
         // Store PKCE and state in session
-        request.session.set('codeVerifier', codeVerifier);
-        request.session.set('state', state);
+        request.session.codeVerifier = codeVerifier;
+        request.session.state = state;
 
         app.log.info({ url }, 'Redirecting to Dexcom authorization URL');
         return reply.redirect(url);
@@ -155,8 +163,8 @@ app.get('/auth/dexcom/callback', async (request: FastifyRequest, reply: FastifyR
     }
 
     // Get code verifier from session
-    const codeVerifier = request.session.get('codeVerifier') as string | undefined;
-    const sessionState = request.session.get('state') as string | undefined;
+    const codeVerifier = request.session.codeVerifier;
+    const sessionState = request.session.state;
 
     app.log.info({
         hasCodeVerifier: !!codeVerifier,
@@ -187,8 +195,8 @@ app.get('/auth/dexcom/callback', async (request: FastifyRequest, reply: FastifyR
         if (success) {
             app.log.info('Successfully authenticated with Dexcom');
             // Clear session data
-            request.session.delete('codeVerifier');
-            request.session.delete('state');
+            request.session.codeVerifier = undefined;
+            request.session.state = undefined;
             return reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard?auth=success`);
         } else {
             app.log.error('Failed to authenticate with Dexcom');

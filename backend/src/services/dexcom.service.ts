@@ -233,24 +233,95 @@ export class DexcomService {
                 await this.initializeClient();
             }
 
-            if (!this.client) {
-                console.error('Failed to initialize OpenID client');
+            console.log('Attempting to exchange code for token with:');
+            console.log('- redirectUri:', this.redirectUri);
+            console.log('- code:', code.substring(0, 8) + '...');
+            console.log('- state:', state.substring(0, 8) + '...');
+            console.log('- codeVerifier length:', codeVerifier ? codeVerifier.length : 0);
+            console.log('- codeVerifier first 10 chars:', codeVerifier ? codeVerifier.substring(0, 10) + '...' : 'missing');
+
+            // Instead of using the OpenID client, let's directly call the token endpoint
+            // as described in the Dexcom API documentation
+            try {
+                // Log the full request details (except secrets)
+                const requestParams = {
+                    grant_type: 'authorization_code',
+                    code,
+                    redirect_uri: this.redirectUri,
+                    client_id: this.clientId.substring(0, 8) + '...',
+                    // Don't log the client_secret
+                };
+                console.log('Token request parameters:', requestParams);
+
+                // Make sure the redirect URI exactly matches what's registered with Dexcom
+                // including trailing slashes, protocol, etc.
+                const tokenResponse = await axios.post(
+                    `${this.apiUrl}/v2/oauth2/token`,
+                    new URLSearchParams({
+                        grant_type: 'authorization_code',
+                        code: code,
+                        redirect_uri: this.redirectUri,
+                        client_id: this.clientId,
+                        client_secret: this.clientSecret
+                    }).toString(),
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        }
+                    }
+                );
+
+                console.log('Token exchange response status:', tokenResponse.status);
+
+                if (tokenResponse.status === 200 && tokenResponse.data) {
+                    const { access_token, refresh_token, expires_in } = tokenResponse.data;
+
+                    // Create a TokenSet from the response
+                    this.tokenSet = new TokenSet({
+                        access_token,
+                        refresh_token,
+                        expires_in
+                    });
+
+                    console.log('Token exchange successful!');
+                    console.log('- access_token:', access_token ? (access_token.substring(0, 8) + '...') : 'missing');
+                    console.log('- refresh_token:', refresh_token ? 'present' : 'missing');
+                    console.log('- expires_in:', expires_in);
+
+                    // Save token to database
+                    await this.saveTokenToDatabase();
+
+                    console.log('Successfully authenticated with Dexcom API');
+                    return true;
+                } else {
+                    console.error('Unexpected token response:', tokenResponse.data);
+                    return false;
+                }
+            } catch (error: any) {
+                console.error('Error during token exchange:', error);
+                if (error.response) {
+                    console.error('Response status:', error.response.status);
+                    console.error('Response data:', error.response.data);
+
+                    // Handle specific error cases
+                    if (error.response.status === 400) {
+                        if (error.response.data.error === 'invalid_grant') {
+                            console.error('Invalid grant error. Possible reasons:');
+                            console.error('1. The authorization code has already been used (they are single-use)');
+                            console.error('2. The authorization code has expired (they expire after one minute)');
+                            console.error('3. The code_verifier doesn\'t match what was used to generate the code_challenge');
+                            console.error('4. The redirect_uri doesn\'t match what was registered with Dexcom');
+                        }
+                    }
+                }
                 return false;
             }
-
-            this.tokenSet = await this.client.callback(
-                this.redirectUri,
-                { code, state },
-                { code_verifier: codeVerifier, state }
-            );
-
-            // Save token to database
-            await this.saveTokenToDatabase();
-
-            console.log('Successfully authenticated with Dexcom API');
-            return true;
         } catch (error) {
             console.error('Failed to exchange auth code:', error);
+            if (error instanceof Error) {
+                console.error('Error details:', error.message);
+                console.error('Error stack:', error.stack);
+            }
             this.tokenSet = null;
             return false;
         }
@@ -258,16 +329,69 @@ export class DexcomService {
 
     async refreshToken(): Promise<boolean> {
         try {
-            if (!this.client || !this.tokenSet?.refresh_token) {
+            if (!this.tokenSet?.refresh_token) {
+                console.error('No refresh token available');
                 return false;
             }
 
-            this.tokenSet = await this.client.refresh(this.tokenSet.refresh_token);
+            console.log('Attempting to refresh token...');
 
-            // Save updated token to database
-            await this.saveTokenToDatabase();
+            // Direct implementation of token refresh based on Dexcom API docs
+            try {
+                const refreshResponse = await axios.post(
+                    `${this.apiUrl}/v2/oauth2/token`,
+                    new URLSearchParams({
+                        grant_type: 'refresh_token',
+                        refresh_token: this.tokenSet.refresh_token!,
+                        client_id: this.clientId,
+                        client_secret: this.clientSecret
+                    }).toString(),
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        }
+                    }
+                );
 
-            return true;
+                console.log('Refresh token response status:', refreshResponse.status);
+
+                if (refreshResponse.status === 200 && refreshResponse.data) {
+                    const { access_token, refresh_token, expires_in } = refreshResponse.data;
+
+                    // Create a new TokenSet from the response
+                    this.tokenSet = new TokenSet({
+                        access_token,
+                        refresh_token,
+                        expires_in
+                    });
+
+                    console.log('Token refresh successful!');
+                    console.log('- new access_token:', access_token ? (access_token.substring(0, 8) + '...') : 'missing');
+                    console.log('- new refresh_token:', refresh_token ? 'present' : 'missing');
+
+                    // Save updated token to database
+                    await this.saveTokenToDatabase();
+
+                    return true;
+                } else {
+                    console.error('Unexpected refresh response:', refreshResponse.data);
+                    return false;
+                }
+            } catch (error: any) {
+                console.error('Error during token refresh:', error);
+                if (error.response) {
+                    console.error('Response status:', error.response.status);
+                    console.error('Response data:', error.response.data);
+                }
+
+                // If we get a 400 error, the refresh token is no longer valid
+                if (error.response && error.response.status === 400) {
+                    console.error('Refresh token is no longer valid. User needs to re-authorize.');
+                    this.tokenSet = null;
+                }
+
+                return false;
+            }
         } catch (error) {
             console.error('Failed to refresh token:', error);
             this.tokenSet = null;

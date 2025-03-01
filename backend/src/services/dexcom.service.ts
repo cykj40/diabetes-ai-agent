@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { Issuer, Client, generators, TokenSet } from 'openid-client';
+import { PrismaClient } from '@prisma/client';
 
 export interface DexcomReading {
     value: number;
@@ -118,13 +119,65 @@ export class DexcomService {
     private readonly redirectUri: string;
     private client: Client | null = null;
     private tokenSet: TokenSet | null = null;
+    private prisma: PrismaClient;
+    private userId: string = 'default-user'; // We'll use a default user ID for now
 
     constructor() {
         this.apiUrl = process.env.DEXCOM_API_URL || 'https://sandbox-api.dexcom.com';
         this.clientId = process.env.DEXCOM_CLIENT_ID || '';
         this.clientSecret = process.env.DEXCOM_CLIENT_SECRET || '';
         this.redirectUri = process.env.DEXCOM_REDIRECT_URI || 'http://localhost:3001/auth/dexcom/callback';
+        this.prisma = new PrismaClient();
         this.initializeClient();
+        this.loadTokenFromDatabase();
+    }
+
+    private async loadTokenFromDatabase() {
+        try {
+            const tokenRecord = await this.prisma.dexcomToken.findUnique({
+                where: { userId: this.userId }
+            });
+
+            if (tokenRecord) {
+                // Create a TokenSet from the database record
+                this.tokenSet = new TokenSet({
+                    access_token: tokenRecord.accessToken,
+                    refresh_token: tokenRecord.refreshToken,
+                    expires_at: Math.floor(tokenRecord.expiresAt.getTime() / 1000)
+                });
+
+                console.log('Loaded token from database');
+            }
+        } catch (error) {
+            console.error('Failed to load token from database:', error);
+        }
+    }
+
+    private async saveTokenToDatabase() {
+        if (!this.tokenSet) return;
+
+        try {
+            const expiresAt = new Date(this.tokenSet.expires_at! * 1000);
+
+            await this.prisma.dexcomToken.upsert({
+                where: { userId: this.userId },
+                update: {
+                    accessToken: this.tokenSet.access_token!,
+                    refreshToken: this.tokenSet.refresh_token!,
+                    expiresAt
+                },
+                create: {
+                    userId: this.userId,
+                    accessToken: this.tokenSet.access_token!,
+                    refreshToken: this.tokenSet.refresh_token!,
+                    expiresAt
+                }
+            });
+
+            console.log('Saved token to database');
+        } catch (error) {
+            console.error('Failed to save token to database:', error);
+        }
     }
 
     private async initializeClient() {
@@ -180,11 +233,19 @@ export class DexcomService {
                 await this.initializeClient();
             }
 
+            if (!this.client) {
+                console.error('Failed to initialize OpenID client');
+                return false;
+            }
+
             this.tokenSet = await this.client.callback(
                 this.redirectUri,
                 { code, state },
-                { code_verifier: codeVerifier }
+                { code_verifier: codeVerifier, state }
             );
+
+            // Save token to database
+            await this.saveTokenToDatabase();
 
             console.log('Successfully authenticated with Dexcom API');
             return true;
@@ -202,6 +263,10 @@ export class DexcomService {
             }
 
             this.tokenSet = await this.client.refresh(this.tokenSet.refresh_token);
+
+            // Save updated token to database
+            await this.saveTokenToDatabase();
+
             return true;
         } catch (error) {
             console.error('Failed to refresh token:', error);
@@ -227,7 +292,7 @@ export class DexcomService {
                 const endDate = new Date();
                 const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
 
-                const response = await axios.get(`${this.apiUrl}/v3/users/self/egvs`, {
+                const response = await axios.get(`${this.apiUrl}/v2/users/self/egvs`, {
                     headers: {
                         'Authorization': `Bearer ${this.tokenSet.access_token}`
                     },
@@ -284,14 +349,14 @@ export class DexcomService {
     }
 
     async getAlerts(startDate: Date, endDate: Date): Promise<DexcomAlert[]> {
-        if (!this.tokenSet) {
-            await this.ensureValidToken();
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
         }
 
         try {
-            const response = await axios.get<AlertsResponse>(`${this.apiUrl}/users/self/alerts`, {
+            const response = await axios.get<AlertsResponse>(`${this.apiUrl}/v2/users/self/alerts`, {
                 headers: {
-                    'Authorization': `Bearer ${this.tokenSet.access_token}`
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 },
                 params: {
                     startDate: startDate.toISOString(),
@@ -318,7 +383,7 @@ export class DexcomService {
         }
 
         try {
-            const response = await axios.get<DevicesResponse>(`${this.apiUrl}/v3/users/self/devices`, {
+            const response = await axios.get<DevicesResponse>(`${this.apiUrl}/v2/users/self/devices`, {
                 headers: {
                     'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 }
@@ -332,8 +397,8 @@ export class DexcomService {
     }
 
     async getDataRange(lastSyncTime?: Date): Promise<DataRangeResponse> {
-        if (!this.tokenSet) {
-            await this.ensureValidToken();
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
         }
 
         try {
@@ -342,9 +407,9 @@ export class DexcomService {
                 params.lastSyncTime = lastSyncTime.toISOString();
             }
 
-            const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/users/self/dataRange`, {
+            const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/v2/users/self/dataRange`, {
                 headers: {
-                    'Authorization': `Bearer ${this.tokenSet.access_token}`
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 },
                 params
             });

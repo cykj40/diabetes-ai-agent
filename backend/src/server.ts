@@ -147,27 +147,40 @@ app.get('/auth/dexcom/login', async (request: FastifyRequest, reply: FastifyRepl
 
 app.get('/auth/dexcom/callback', async (request: FastifyRequest, reply: FastifyReply) => {
     const { code, state } = request.query as { code?: string, state?: string };
-    app.log.info({ code: code?.substring(0, 8) + '...' }, 'Received callback');
+    app.log.info({ code: code ? (code.substring(0, 8) + '...') : 'missing', state: state || 'missing' }, 'Received callback');
 
     if (!code || !state) {
         app.log.error('Missing authorization code or state');
         return reply.status(400).send({ error: 'Missing authorization code or state' });
     }
 
-    // Verify state matches
-    const sessionState = request.session.get('state');
-    if (state !== sessionState) {
-        app.log.error({
-            receivedState: state,
-            expectedState: sessionState
-        }, 'State mismatch - possible CSRF attack');
-        return reply.status(400).send({ error: 'Invalid state parameter' });
+    // Get code verifier from session
+    const codeVerifier = request.session.get('codeVerifier') as string | undefined;
+    const sessionState = request.session.get('state') as string | undefined;
+
+    app.log.info({
+        hasCodeVerifier: !!codeVerifier,
+        codeVerifierValue: codeVerifier ? 'present' : 'missing',
+        hasSessionState: !!sessionState,
+        sessionStateValue: sessionState || 'missing',
+        stateMatches: state === sessionState
+    }, 'Session data check');
+
+    if (!codeVerifier) {
+        app.log.error('Missing code verifier in session');
+        return reply.status(400).send({ error: 'Missing code verifier in session' });
+    }
+
+    if (!sessionState || state !== sessionState) {
+        app.log.error('State mismatch or missing session state');
+        return reply.status(400).send({ error: 'State mismatch or missing session state' });
     }
 
     try {
+        app.log.info('Calling dexcomService.handleCallback with code, codeVerifier, and state');
         const success = await dexcomService.handleCallback(
             code,
-            request.session.get('codeVerifier')!,
+            codeVerifier,
             state
         );
 
@@ -176,7 +189,7 @@ app.get('/auth/dexcom/callback', async (request: FastifyRequest, reply: FastifyR
             // Clear session data
             request.session.delete('codeVerifier');
             request.session.delete('state');
-            return reply.redirect('/dashboard?auth=success');
+            return reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard?auth=success`);
         } else {
             app.log.error('Failed to authenticate with Dexcom');
             return reply.status(401).send({ error: 'Authentication failed' });

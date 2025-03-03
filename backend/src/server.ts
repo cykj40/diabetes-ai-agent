@@ -15,6 +15,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { DexcomService } from './services/dexcom.service';
+import { AIService } from './services/ai.service';
+import { DiabetesAgent } from './services/diabetes-agent';
 
 // Extend the Session interface to include our custom properties
 declare module '@fastify/session' {
@@ -89,6 +91,8 @@ app.register(fastifySession, {
 
 // Initialize services
 const dexcomService = new DexcomService();
+const aiService = new AIService();
+const diabetesAgent = new DiabetesAgent();
 
 // Define route schemas
 const StatusResponse = Type.Object({
@@ -306,6 +310,442 @@ app.get('/api/dexcom/devices', {
     return dexcomService.getDevices();
 });
 
+app.get('/api/dexcom/weekly-data', {
+    schema: {
+        response: {
+            200: Type.Object({
+                labels: Type.Array(Type.String()),
+                values: Type.Array(Type.Number()),
+                trends: Type.Array(Type.String()),
+                insights: Type.Array(Type.String())
+            }),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request, reply) => {
+    try {
+        app.log.info('Fetching weekly blood sugar data');
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        const weeklyData = await dexcomService.getWeeklyBloodSugarData();
+        return weeklyData;
+    } catch (error) {
+        app.log.error('Error fetching weekly blood sugar data:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch weekly blood sugar data',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Get Dexcom device data and readings
+app.get('/api/dexcom/device-data', {
+    schema: {
+        response: {
+            200: Type.Object({
+                devices: Type.Array(Type.Object({
+                    lastUploadDate: Type.String(),
+                    transmitterId: Type.Optional(Type.String()),
+                    transmitterGeneration: Type.String(),
+                    displayDevice: Type.String(),
+                    displayApp: Type.Optional(Type.String())
+                })),
+                readings: Type.Array(Type.Object({
+                    value: Type.Number(),
+                    trend: Type.String(),
+                    timestamp: Type.String()
+                }))
+            }),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request, reply) => {
+    try {
+        app.log.info('Fetching Dexcom device data with readings');
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        const [devices, readings] = await Promise.all([
+            dexcomService.getDevices(),
+            dexcomService.getLatestReadings(48)
+        ]);
+
+        return {
+            devices,
+            readings
+        };
+    } catch (error) {
+        app.log.error('Error fetching Dexcom device data:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch Dexcom device data',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Get Dexcom data range
+app.get('/api/dexcom/data-range', {
+    schema: {
+        querystring: Type.Object({
+            lastSyncTime: Type.Optional(Type.String())
+        }),
+        response: {
+            200: Type.Object({
+                recordType: Type.String(),
+                recordVersion: Type.String(),
+                userId: Type.String(),
+                calibrations: Type.Optional(Type.Object({
+                    start: Type.Object({
+                        systemTime: Type.String(),
+                        displayTime: Type.String()
+                    }),
+                    end: Type.Object({
+                        systemTime: Type.String(),
+                        displayTime: Type.String()
+                    })
+                })),
+                egvs: Type.Optional(Type.Object({
+                    start: Type.Object({
+                        systemTime: Type.String(),
+                        displayTime: Type.String()
+                    }),
+                    end: Type.Object({
+                        systemTime: Type.String(),
+                        displayTime: Type.String()
+                    })
+                })),
+                events: Type.Optional(Type.Object({
+                    start: Type.Object({
+                        systemTime: Type.String(),
+                        displayTime: Type.String()
+                    }),
+                    end: Type.Object({
+                        systemTime: Type.String(),
+                        displayTime: Type.String()
+                    })
+                }))
+            }),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Querystring: {
+        lastSyncTime?: string;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        app.log.info('Fetching Dexcom data range');
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        let lastSyncTime: Date | undefined;
+
+        // Parse lastSyncTime query parameter if provided
+        if (request.query.lastSyncTime) {
+            lastSyncTime = new Date(request.query.lastSyncTime);
+            app.log.info(`Using lastSyncTime: ${lastSyncTime.toISOString()}`);
+        }
+
+        const dataRange = await dexcomService.getDataRange(lastSyncTime);
+        app.log.info('Successfully fetched data range');
+
+        return dataRange;
+    } catch (error) {
+        app.log.error('Error fetching data range:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch data range',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Get Dexcom events
+app.get('/api/dexcom/events', {
+    schema: {
+        querystring: Type.Object({
+            days: Type.Optional(Type.Number({ default: 7 }))
+        }),
+        response: {
+            200: Type.Array(Type.Object({
+                systemTime: Type.String(),
+                displayTime: Type.String(),
+                recordId: Type.String(),
+                eventStatus: Type.String(),
+                eventType: Type.String(),
+                eventSubType: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                value: Type.String(),
+                unit: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+                transmitterId: Type.String(),
+                transmitterGeneration: Type.String(),
+                displayDevice: Type.String()
+            })),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Querystring: {
+        days?: number;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        const days = request.query.days || 7;
+        app.log.info(`Fetching Dexcom events for the last ${days} days`);
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        const events = await dexcomService.getLatestEvents(days);
+        app.log.info(`Successfully fetched ${events.length} events`);
+
+        return events;
+    } catch (error) {
+        app.log.error('Error fetching events:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch events',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Get nutrition data
+app.get('/api/dexcom/nutrition', {
+    schema: {
+        querystring: Type.Object({
+            days: Type.Optional(Type.Number({ default: 7 }))
+        }),
+        response: {
+            200: Type.Object({
+                dates: Type.Array(Type.String()),
+                carbs: Type.Array(Type.Number())
+            }),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Querystring: {
+        days?: number;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        const days = request.query.days || 7;
+        app.log.info(`Fetching nutrition data for the last ${days} days`);
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        const nutritionData = await dexcomService.getNutritionData(days);
+        app.log.info(`Successfully fetched nutrition data for ${nutritionData.dates.length} days`);
+
+        return nutritionData;
+    } catch (error) {
+        app.log.error('Error fetching nutrition data:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch nutrition data',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Get insulin data
+app.get('/api/dexcom/insulin', {
+    schema: {
+        querystring: Type.Object({
+            days: Type.Optional(Type.Number({ default: 7 }))
+        }),
+        response: {
+            200: Type.Object({
+                dates: Type.Array(Type.String()),
+                fastActing: Type.Array(Type.Number()),
+                longActing: Type.Array(Type.Number())
+            }),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Querystring: {
+        days?: number;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        const days = request.query.days || 7;
+        app.log.info(`Fetching insulin data for the last ${days} days`);
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        const insulinData = await dexcomService.getInsulinData(days);
+        app.log.info(`Successfully fetched insulin data for ${insulinData.dates.length} days`);
+
+        return insulinData;
+    } catch (error) {
+        app.log.error('Error fetching insulin data:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch insulin data',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// AI analysis endpoint
+app.post('/api/ai/analyze-blood-sugar', {
+    schema: {
+        body: Type.Object({
+            content: Type.String()
+        }),
+        response: {
+            200: Type.Object({
+                glucoseTrend: Type.String(),
+                anomalyDetected: Type.Boolean(),
+                anomalyDescription: Type.Optional(Type.String()),
+                recommendations: Type.String(),
+                summary: Type.String(),
+                riskLevel: Type.Number()
+            }),
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Body: {
+        content: string;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        app.log.info('Analyzing blood sugar data with AI');
+        const result = await aiService.analyzeBloodSugar(request.body);
+        return result;
+    } catch (error) {
+        app.log.error(error, 'Error analyzing blood sugar data');
+        return reply.status(500).send({
+            error: 'Failed to analyze blood sugar data',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// AI Q&A endpoint
+app.post('/api/ai/qa', {
+    schema: {
+        body: Type.Object({
+            question: Type.String(),
+            entries: Type.Array(Type.Object({
+                id: Type.String(),
+                content: Type.String(),
+                createdAt: Type.String()
+            }))
+        }),
+        response: {
+            200: Type.Object({
+                answer: Type.String()
+            }),
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Body: {
+        question: string;
+        entries: Array<{ id: string; content: string; createdAt: string }>;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        app.log.info('Processing Q&A with AI');
+
+        // Convert string dates to Date objects
+        const entries = request.body.entries.map(entry => ({
+            ...entry,
+            createdAt: new Date(entry.createdAt)
+        }));
+
+        const answer = await aiService.qa(request.body.question, entries);
+        return { answer };
+    } catch (error) {
+        app.log.error(error, 'Error processing Q&A');
+        return reply.status(500).send({
+            error: 'Failed to process Q&A',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// AI Chat endpoint
+app.post('/api/chat', {
+    schema: {
+        body: Type.Object({
+            message: Type.String(),
+            sessionId: Type.Optional(Type.String({ default: 'default' }))
+        }),
+        response: {
+            200: Type.Object({
+                response: Type.String(),
+                sessionId: Type.String()
+            }),
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Body: {
+        message: string;
+        sessionId?: string;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        const { message, sessionId = 'default' } = request.body;
+        app.log.info({ sessionId }, 'Processing chat message with AI');
+
+        const result = await diabetesAgent.ask(message, sessionId);
+
+        return {
+            response: result.output,
+            sessionId
+        };
+    } catch (error) {
+        app.log.error(error, 'Error processing chat message');
+        return reply.status(500).send({
+            error: 'Failed to process chat message',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
 // Start server
 const start = async () => {
     try {
@@ -321,6 +761,15 @@ const start = async () => {
         app.log.info('\nAPI:');
         app.log.info('- GET /api/dexcom/readings');
         app.log.info('- GET /api/dexcom/devices');
+        app.log.info('- GET /api/dexcom/weekly-data');
+        app.log.info('- GET /api/dexcom/device-data');
+        app.log.info('- GET /api/dexcom/data-range');
+        app.log.info('- GET /api/dexcom/events');
+        app.log.info('- GET /api/dexcom/nutrition');
+        app.log.info('- GET /api/dexcom/insulin');
+        app.log.info('- POST /api/ai/analyze-blood-sugar');
+        app.log.info('- POST /api/ai/qa');
+        app.log.info('- POST /api/chat');
         app.log.info('- GET /health');
     } catch (err) {
         app.log.error(err);

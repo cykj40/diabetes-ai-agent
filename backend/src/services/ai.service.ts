@@ -123,4 +123,21 @@ Question: ${question}`)
 
         return response.content.toString();
     }
+
+    /**
+     * Generate embeddings for an array of texts
+     * @param texts Array of text strings to embed
+     * @returns Array of embedding vectors
+     */
+    async generateEmbeddings(texts: string[]): Promise<number[][]> {
+        try {
+            console.log(`Generating embeddings for ${texts.length} texts`);
+            const embeddings = await this.embeddings.embedDocuments(texts);
+            console.log('Embeddings generated successfully');
+            return embeddings;
+        } catch (error) {
+            console.error('Error generating embeddings:', error);
+            throw new Error(`Failed to generate embeddings: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
 } 

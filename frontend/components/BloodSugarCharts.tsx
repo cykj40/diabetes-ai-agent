@@ -84,7 +84,8 @@ export default function BloodSugarCharts({ data }: Props) {
         }
     };
 
-    const chartData: ChartData<'line' | 'bar'> = {
+    // Create separate chart data objects for line and bar charts
+    const lineChartData: ChartData<'line'> = {
         labels: data.data.labels,
         datasets: [
             {
@@ -98,16 +99,28 @@ export default function BloodSugarCharts({ data }: Props) {
         ]
     };
 
+    const barChartData: ChartData<'bar'> = {
+        labels: data.data.labels,
+        datasets: [
+            {
+                label: 'Blood Sugar',
+                data: data.data.values,
+                borderColor: 'rgb(75, 192, 192)',
+                backgroundColor: 'rgba(75, 192, 192, 0.5)'
+            }
+        ]
+    };
+
     const renderChart = () => {
         switch (data.type) {
             case 'line':
-                return <Line options={chartOptions} data={chartData} />;
+                return <Line options={chartOptions as ChartOptions<'line'>} data={lineChartData} />;
             case 'bar':
-                return <Bar options={chartOptions} data={chartData} />;
+                return <Bar options={chartOptions as ChartOptions<'bar'>} data={barChartData} />;
             case 'timeOfDay':
                 return (
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <Bar options={chartOptions} data={chartData} />
+                        <Bar options={chartOptions as ChartOptions<'bar'>} data={barChartData} />
                         <div className="bg-white p-4 rounded-lg shadow">
                             <h3 className="text-lg font-semibold mb-3">Time of Day Insights</h3>
                             <ul className="space-y-2">

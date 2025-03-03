@@ -18,16 +18,20 @@ model ChatMessage {
 }
 
 model BloodSugarReading {
-    id        String   @id @default(uuid())
-    sessionId String
-    value     Float
-    trend     String
-    timestamp DateTime
-    analyzed  Boolean  @default(false)
-    analysis  Json? // Stores the AI analysis results
+    id         String   @id @default(uuid())
+    sessionId  String
+    userId     String   @default("default-user")
+    value      Float
+    trend      String
+    timestamp  DateTime
+    analyzed   Boolean  @default(false)
+    isEmbedded Boolean  @default(false)
+    analysis   Json? // Stores the AI analysis results
 
+    @@unique([userId, timestamp])
     @@index([sessionId])
     @@index([timestamp])
+    @@index([userId])
 }
 
 model DexcomToken {

@@ -112,6 +112,50 @@ export interface DataRangeResponse {
     events?: DataRangeStartAndEnd;
 }
 
+export interface DexcomV3Reading {
+    recordId: string;
+    systemTime: string;
+    displayTime: string;
+    transmitterId?: string;
+    transmitterTicks: number;
+    value?: number;
+    status?: 'unknown' | 'high' | 'low' | 'ok';
+    trend?: 'none' | 'unknown' | 'doubleUp' | 'singleUp' | 'fortyFiveUp' | 'flat' | 'fortyFiveDown' | 'singleDown' | 'doubleDown' | 'notComputable' | 'rateOutOfRange';
+    trendRate?: number;
+    unit: string;
+    rateUnit: string;
+    displayDevice: string;
+    transmitterGeneration: string;
+}
+
+export interface DexcomV3Response {
+    recordType: string;
+    recordVersion: string;
+    userId: string;
+    records: DexcomV3Reading[];
+}
+
+export interface DexcomEvent {
+    systemTime: string;
+    displayTime: string;
+    recordId: string;
+    eventStatus: 'created' | 'updated' | 'deleted';
+    eventType: 'unknown' | 'insulin' | 'carbs' | 'exercise' | 'health' | 'bloodGlucose' | 'notes';
+    eventSubType?: 'unknown' | 'fastActing' | 'longActing' | 'light' | 'medium' | 'heavy' | 'illness' | 'stress' | 'highSymptoms' | 'lowSymptoms' | 'cycle' | 'alcohol' | null;
+    value: string;
+    unit?: 'unknown' | 'grams' | 'mg/dL' | 'minutes' | 'units' | null;
+    transmitterId: string;
+    transmitterGeneration: 'unknown' | 'g4' | 'g5' | 'g6' | 'g6+' | 'dexcomPro' | 'g7';
+    displayDevice: string;
+}
+
+export interface EventsResponse {
+    recordType: string;
+    recordVersion: string;
+    userId: string;
+    records: DexcomEvent[];
+}
+
 export class DexcomService {
     private readonly apiUrl: string;
     private readonly clientId: string;
@@ -337,74 +381,47 @@ export class DexcomService {
     }
 
     async refreshToken(): Promise<boolean> {
-        try {
-            if (!this.tokenSet?.refresh_token) {
-                console.error('No refresh token available');
-                return false;
-            }
-
-            console.log('Attempting to refresh token...');
-
-            // Direct implementation of token refresh based on Dexcom API docs
-            try {
-                const refreshResponse = await axios.post(
-                    `${this.apiUrl}/v2/oauth2/token`,
-                    new URLSearchParams({
-                        grant_type: 'refresh_token',
-                        refresh_token: this.tokenSet.refresh_token!,
-                        client_id: this.clientId,
-                        client_secret: this.clientSecret
-                    }).toString(),
-                    {
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded'
-                        }
-                    }
-                );
-
-                console.log('Refresh token response status:', refreshResponse.status);
-
-                if (refreshResponse.status === 200 && refreshResponse.data) {
-                    const { access_token, refresh_token, expires_in } = refreshResponse.data;
-
-                    // Create a new TokenSet from the response
-                    this.tokenSet = new TokenSet({
-                        access_token,
-                        refresh_token,
-                        expires_in
-                    });
-
-                    console.log('Token refresh successful!');
-                    console.log('- new access_token:', access_token ? (access_token.substring(0, 8) + '...') : 'missing');
-                    console.log('- new refresh_token:', refresh_token ? 'present' : 'missing');
-
-                    // Save updated token to database
-                    await this.saveTokenToDatabase();
-
-                    return true;
-                } else {
-                    console.error('Unexpected refresh response:', refreshResponse.data);
-                    return false;
-                }
-            } catch (error: any) {
-                console.error('Error during token refresh:', error);
-                if (error.response) {
-                    console.error('Response status:', error.response.status);
-                    console.error('Response data:', error.response.data);
-                }
-
-                // If we get a 400 error, the refresh token is no longer valid
-                if (error.response && error.response.status === 400) {
-                    console.error('Refresh token is no longer valid. User needs to re-authorize.');
-                    this.tokenSet = null;
-                }
-
-                return false;
-            }
-        } catch (error) {
-            console.error('Failed to refresh token:', error);
-            this.tokenSet = null;
+        if (!this.client || !this.tokenSet || !this.tokenSet.refresh_token) {
+            console.log('Cannot refresh token: missing client or refresh token');
             return false;
+        }
+
+        try {
+            console.log('Refreshing token...');
+            const newTokenSet = await this.client.refresh(this.tokenSet.refresh_token);
+
+            // Important: Dexcom issues a new refresh token with each refresh
+            // The old refresh token is immediately invalidated
+            this.tokenSet = newTokenSet;
+
+            // Save the new token set to the database
+            await this.saveTokenToDatabase();
+
+            console.log('Token refreshed successfully');
+            return true;
+        } catch (error: any) {
+            // Handle specific error cases as mentioned in Dexcom docs
+            if (error.response?.statusCode === 400) {
+                console.error('Refresh token is no longer valid. User needs to re-authorize.');
+                // Clear invalid tokens
+                this.tokenSet = null;
+                await this.clearTokenFromDatabase();
+                // User will need to go through authorization flow again
+            } else {
+                console.error('Failed to refresh token:', error);
+            }
+            return false;
+        }
+    }
+
+    private async clearTokenFromDatabase() {
+        try {
+            await this.prisma.dexcomToken.delete({
+                where: { userId: this.userId }
+            });
+            console.log('Cleared invalid token from database');
+        } catch (error) {
+            console.error('Failed to clear token from database:', error);
         }
     }
 
@@ -431,54 +448,22 @@ export class DexcomService {
 
             if (hasValidToken && this.tokenSet) {
                 console.log('Fetching real Dexcom data...');
-                console.log('API URL:', this.apiUrl);
 
-                // Get current date and ensure it's not in the future
-                const now = new Date();
-                const currentTime = new Date();
-                // Check if date is in the future and adjust if needed
-                if (now > new Date(Date.now() + 86400000)) { // If more than 1 day in the future
-                    console.log('System date appears to be in the future, using current timestamp instead');
-                    now.setTime(Date.now());
-                }
-
-                const endDate = now;
-                const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
-
-                console.log('Current time from Date.now():', new Date(Date.now()).toISOString());
-                console.log('Using date range:', {
-                    startDate: startDate.toISOString(),
-                    endDate: endDate.toISOString()
-                });
-
+                // Try to use the v3 API first
                 try {
-                    const response = await axios.get(`${this.apiUrl}/v2/users/self/egvs`, {
-                        headers: {
-                            'Authorization': `Bearer ${this.tokenSet.access_token}`
-                        },
-                        params: {
-                            startDate: startDate.toISOString(),
-                            endDate: endDate.toISOString()
-                        }
-                    });
+                    const v3Readings = await this.getV3EGVs(count);
+                    console.log(`Successfully fetched ${v3Readings.length} readings from v3 API`);
+                    return v3Readings;
+                } catch (v3Error) {
+                    console.error('Error using v3 API, falling back to v2:', v3Error);
 
-                    console.log('Dexcom API response status:', response.status);
-                    console.log('Response has data:', !!response.data);
-                    console.log('Response has records:', !!response.data.records);
-                    console.log('Number of records:', response.data.records ? response.data.records.length : 0);
-
-                    return response.data.records.map((record: any) => ({
-                        value: record.value,
-                        trend: record.trend,
-                        timestamp: record.timestamp
-                    }));
-                } catch (apiError: any) {
-                    console.error('Error calling Dexcom API:', apiError.message);
-                    if (apiError.response) {
-                        console.error('Response status:', apiError.response.status);
-                        console.error('Response data:', apiError.response.data);
+                    // Fall back to v2 API if v3 fails
+                    try {
+                        return await this.getV2Readings(count);
+                    } catch (v2Error) {
+                        console.error('Error using v2 API, falling back to mock data:', v2Error);
+                        return this.generateMockReadings(count);
                     }
-                    throw apiError; // Re-throw to be caught by the outer catch
                 }
             } else {
                 console.log('No valid token available, falling back to mock data');
@@ -491,13 +476,133 @@ export class DexcomService {
         }
     }
 
+    private async getV2Readings(count: number): Promise<DexcomReading[]> {
+        // Use current date instead of fixed date
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+
+        console.log('Using date range for v2 API:', {
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString()
+        });
+
+        try {
+            const response = await axios.get(`${this.apiUrl}/v2/users/self/egvs`, {
+                headers: {
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                },
+                params: {
+                    startDate: startDate.toISOString(),
+                    endDate: endDate.toISOString()
+                }
+            });
+
+            console.log('Dexcom v2 API response status:', response.status);
+            console.log('Response has data:', !!response.data);
+            console.log('Response has records:', !!response.data.records);
+            console.log('Number of records:', response.data.records ? response.data.records.length : 0);
+
+            return response.data.records.map((record: any) => ({
+                value: record.value,
+                trend: record.trend,
+                timestamp: record.timestamp
+            }));
+        } catch (apiError: any) {
+            console.error('Error calling Dexcom v2 API:', apiError.message);
+            if (apiError.response) {
+                console.error('Response status:', apiError.response.status);
+                console.error('Response data:', apiError.response.data);
+            }
+            throw apiError;
+        }
+    }
+
+    async getV3EGVs(count: number = 48): Promise<DexcomReading[]> {
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
+        }
+
+        // Use current date instead of fixed date
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+
+        console.log('Using date range for v3 API:', {
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString()
+        });
+
+        try {
+            console.log('Calling Dexcom v3 API endpoint...');
+            const response = await axios.get<DexcomV3Response>(`${this.apiUrl}/v3/users/self/egvs`, {
+                headers: {
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                },
+                params: {
+                    startDate: startDate.toISOString(),
+                    endDate: endDate.toISOString()
+                }
+            });
+
+            console.log('Dexcom v3 API response status:', response.status);
+            console.log('Response has data:', !!response.data);
+            console.log('Response has records:', !!response.data.records);
+            console.log('Number of records:', response.data.records ? response.data.records.length : 0);
+
+            // Convert v3 format to the format expected by the frontend
+            return response.data.records.map(record => {
+                // Convert trend values from v3 to v2 format
+                let trendValue = 'Stable';
+                switch (record.trend) {
+                    case 'doubleUp':
+                        trendValue = 'Rising Rapidly';
+                        break;
+                    case 'singleUp':
+                        trendValue = 'Rising';
+                        break;
+                    case 'fortyFiveUp':
+                        trendValue = 'Rising Slightly';
+                        break;
+                    case 'flat':
+                        trendValue = 'Stable';
+                        break;
+                    case 'fortyFiveDown':
+                        trendValue = 'Falling Slightly';
+                        break;
+                    case 'singleDown':
+                        trendValue = 'Falling';
+                        break;
+                    case 'doubleDown':
+                        trendValue = 'Falling Rapidly';
+                        break;
+                    default:
+                        trendValue = 'Stable';
+                }
+
+                return {
+                    value: record.value || 0,
+                    trend: trendValue,
+                    timestamp: record.systemTime
+                };
+            });
+        } catch (error: any) {
+            console.error('Error calling Dexcom v3 API:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
+            throw error;
+        }
+    }
+
     private generateMockReadings(count: number): DexcomReading[] {
         console.log('Generating mock blood sugar data');
         const mockReadings: DexcomReading[] = [];
-        const now = new Date();
+
+        // Use current date instead of fixed date from 2023
+        const endDate = new Date();
 
         for (let i = 0; i < count; i++) {
-            const timestamp = new Date(now.getTime() - (i * 5 * 60 * 1000));
+            const timestamp = new Date(endDate.getTime() - (i * 5 * 60 * 1000));
             const baseValue = 140;
             const variation = Math.sin(i / 12) * 30;
             const randomness = (Math.random() - 0.5) * 20;
@@ -547,9 +652,39 @@ export class DexcomService {
     }
 
     async getLatestAlerts(hours: number = 24): Promise<DexcomAlert[]> {
+        // Use current date instead of fixed date
         const endDate = new Date();
         const startDate = new Date(endDate.getTime() - (hours * 60 * 60 * 1000)); // hours in ms
         return this.getAlerts(startDate, endDate);
+    }
+
+    async getV3Devices(): Promise<DexcomDevice[]> {
+        if (!await this.ensureValidToken()) {
+            return [];
+        }
+
+        try {
+            console.log('Calling Dexcom v3 devices API endpoint...');
+            const response = await axios.get<DevicesResponse>(`${this.apiUrl}/v3/users/self/devices`, {
+                headers: {
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                }
+            });
+
+            console.log('Dexcom v3 devices API response status:', response.status);
+            console.log('Response has data:', !!response.data);
+            console.log('Response has records:', !!response.data.records);
+            console.log('Number of records:', response.data.records ? response.data.records.length : 0);
+
+            return response.data.records;
+        } catch (error: any) {
+            console.error('Error calling Dexcom v3 devices API:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
+            return [];
+        }
     }
 
     async getDevices(): Promise<DexcomDevice[]> {
@@ -558,6 +693,18 @@ export class DexcomService {
         }
 
         try {
+            // Try v3 API first
+            try {
+                const v3Devices = await this.getV3Devices();
+                if (v3Devices.length > 0) {
+                    console.log(`Successfully fetched ${v3Devices.length} devices from v3 API`);
+                    return v3Devices;
+                }
+            } catch (v3Error) {
+                console.error('Error using v3 devices API, falling back to v2:', v3Error);
+            }
+
+            // Fall back to v2 API
             const response = await axios.get<DevicesResponse>(`${this.apiUrl}/v2/users/self/devices`, {
                 headers: {
                     'Authorization': `Bearer ${this.tokenSet!.access_token}`
@@ -577,22 +724,353 @@ export class DexcomService {
         }
 
         try {
+            // Try v3 API first
+            try {
+                return await this.getV3DataRange(lastSyncTime);
+            } catch (v3Error) {
+                console.error('Error using v3 data range API, falling back to v2:', v3Error);
+
+                // Fall back to v2 API
+                const params: { lastSyncTime?: string } = {};
+                if (lastSyncTime) {
+                    params.lastSyncTime = lastSyncTime.toISOString();
+                }
+
+                const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/v2/users/self/dataRange`, {
+                    headers: {
+                        'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                    },
+                    params
+                });
+
+                return response.data;
+            }
+        } catch (error) {
+            console.error('Failed to fetch Dexcom data range:', error);
+            throw new Error('Failed to fetch data range');
+        }
+    }
+
+    async getV3DataRange(lastSyncTime?: Date): Promise<DataRangeResponse> {
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
+        }
+
+        try {
+            console.log('Calling Dexcom v3 data range API endpoint...');
+
             const params: { lastSyncTime?: string } = {};
             if (lastSyncTime) {
                 params.lastSyncTime = lastSyncTime.toISOString();
+                console.log(`Using lastSyncTime: ${params.lastSyncTime}`);
             }
 
-            const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/v2/users/self/dataRange`, {
+            const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/v3/users/self/dataRange`, {
                 headers: {
                     'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 },
                 params
             });
 
+            console.log('Dexcom v3 data range API response status:', response.status);
+            console.log('Response has data:', !!response.data);
+
+            if (response.data.egvs) {
+                console.log('EGVs data range:', {
+                    start: response.data.egvs.start.systemTime,
+                    end: response.data.egvs.end.systemTime
+                });
+            }
+
             return response.data;
+        } catch (error: any) {
+            console.error('Error calling Dexcom v3 data range API:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
+            throw error;
+        }
+    }
+
+    async getWeeklyBloodSugarData(): Promise<{
+        labels: string[];
+        values: number[];
+        trends: string[];
+        insights: string[];
+    }> {
+        try {
+            console.log('Fetching weekly blood sugar data...');
+
+            // Use current date instead of fixed date
+            const endDate = new Date();
+            const startDate = new Date(endDate.getTime());
+            startDate.setDate(startDate.getDate() - 7);
+
+            console.log(`Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
+
+            // Get readings for the past week
+            const readings = await this.getLatestReadings(2016); // 7 days * 24 hours * 12 readings per hour (5-min intervals)
+
+            // Filter readings to only include those from the past week
+            const weeklyReadings = readings.filter(reading => {
+                const readingDate = new Date(reading.timestamp);
+                return readingDate >= startDate && readingDate <= endDate;
+            });
+
+            console.log(`Found ${weeklyReadings.length} readings in the past week`);
+
+            if (weeklyReadings.length === 0) {
+                return {
+                    labels: [],
+                    values: [],
+                    trends: [],
+                    insights: ['No blood sugar data available for the past week.']
+                };
+            }
+
+            // Format data for the chart
+            const labels = weeklyReadings.map(reading => {
+                const date = new Date(reading.timestamp);
+                return date.toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: 'numeric',
+                    minute: '2-digit'
+                });
+            });
+
+            const values = weeklyReadings.map(reading => reading.value);
+            const trends = weeklyReadings.map(reading => reading.trend);
+
+            // Generate insights
+            const insights = this.generateInsightsFromReadings(weeklyReadings);
+
+            return {
+                labels,
+                values,
+                trends,
+                insights
+            };
         } catch (error) {
-            console.error('Failed to fetch Dexcom data range:', error);
-            throw new Error('Failed to fetch data range');
+            console.error('Error fetching weekly blood sugar data:', error);
+            throw error;
+        }
+    }
+
+    private generateInsightsFromReadings(readings: DexcomReading[]): string[] {
+        const insights: string[] = [];
+
+        if (readings.length === 0) {
+            return ['No data available for analysis.'];
+        }
+
+        // Calculate average blood sugar
+        const sum = readings.reduce((total, reading) => total + reading.value, 0);
+        const average = Math.round(sum / readings.length);
+        insights.push(`Average blood sugar: ${average} mg/dL`);
+
+        // Find highest and lowest readings
+        const sortedReadings = [...readings].sort((a, b) => a.value - b.value);
+        const lowest = sortedReadings[0];
+        const highest = sortedReadings[sortedReadings.length - 1];
+
+        insights.push(`Lowest reading: ${lowest.value} mg/dL (${new Date(lowest.timestamp).toLocaleString()})`);
+        insights.push(`Highest reading: ${highest.value} mg/dL (${new Date(highest.timestamp).toLocaleString()})`);
+
+        // Calculate time in range (70-180 mg/dL)
+        const inRange = readings.filter(r => r.value >= 70 && r.value <= 180).length;
+        const percentInRange = Math.round((inRange / readings.length) * 100);
+        insights.push(`Time in range (70-180 mg/dL): ${percentInRange}%`);
+
+        // Identify patterns
+        const morningReadings = readings.filter(r => {
+            const hour = new Date(r.timestamp).getHours();
+            return hour >= 6 && hour < 12;
+        });
+
+        const afternoonReadings = readings.filter(r => {
+            const hour = new Date(r.timestamp).getHours();
+            return hour >= 12 && hour < 18;
+        });
+
+        const eveningReadings = readings.filter(r => {
+            const hour = new Date(r.timestamp).getHours();
+            return hour >= 18 && hour < 22;
+        });
+
+        const nightReadings = readings.filter(r => {
+            const hour = new Date(r.timestamp).getHours();
+            return hour >= 22 || hour < 6;
+        });
+
+        const morningAvg = morningReadings.length > 0
+            ? Math.round(morningReadings.reduce((sum, r) => sum + r.value, 0) / morningReadings.length)
+            : 0;
+
+        const afternoonAvg = afternoonReadings.length > 0
+            ? Math.round(afternoonReadings.reduce((sum, r) => sum + r.value, 0) / afternoonReadings.length)
+            : 0;
+
+        const eveningAvg = eveningReadings.length > 0
+            ? Math.round(eveningReadings.reduce((sum, r) => sum + r.value, 0) / eveningReadings.length)
+            : 0;
+
+        const nightAvg = nightReadings.length > 0
+            ? Math.round(nightReadings.reduce((sum, r) => sum + r.value, 0) / nightReadings.length)
+            : 0;
+
+        if (morningAvg > 0) insights.push(`Morning average: ${morningAvg} mg/dL`);
+        if (afternoonAvg > 0) insights.push(`Afternoon average: ${afternoonAvg} mg/dL`);
+        if (eveningAvg > 0) insights.push(`Evening average: ${eveningAvg} mg/dL`);
+        if (nightAvg > 0) insights.push(`Night average: ${nightAvg} mg/dL`);
+
+        return insights;
+    }
+
+    async getEvents(startDate: Date, endDate: Date): Promise<DexcomEvent[]> {
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
+        }
+
+        try {
+            console.log('Fetching Dexcom events...');
+            console.log('Date range:', {
+                startDate: startDate.toISOString(),
+                endDate: endDate.toISOString()
+            });
+
+            const response = await axios.get<EventsResponse>(`${this.apiUrl}/v3/users/self/events`, {
+                headers: {
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                },
+                params: {
+                    startDate: startDate.toISOString(),
+                    endDate: endDate.toISOString()
+                }
+            });
+
+            console.log('Dexcom events API response status:', response.status);
+            console.log('Response has data:', !!response.data);
+            console.log('Response has records:', !!response.data.records);
+            console.log('Number of event records:', response.data.records ? response.data.records.length : 0);
+
+            if (response.data.records && response.data.records.length > 0) {
+                // Log summary of event types
+                const eventTypeCounts = response.data.records.reduce((counts, event) => {
+                    counts[event.eventType] = (counts[event.eventType] || 0) + 1;
+                    return counts;
+                }, {} as Record<string, number>);
+
+                console.log('Event type summary:', eventTypeCounts);
+            }
+
+            return response.data.records || [];
+        } catch (error: any) {
+            console.error('Error fetching Dexcom events:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
+            throw new Error('Failed to fetch Dexcom events');
+        }
+    }
+
+    async getLatestEvents(days: number = 7): Promise<DexcomEvent[]> {
+        // Use current date
+        const endDate = new Date();
+        const startDate = new Date(endDate.getTime());
+        startDate.setDate(startDate.getDate() - days);
+
+        return this.getEvents(startDate, endDate);
+    }
+
+    async getNutritionData(days: number = 7): Promise<{
+        dates: string[];
+        carbs: number[];
+    }> {
+        try {
+            const events = await this.getLatestEvents(days);
+
+            // Filter for carb events only
+            const carbEvents = events.filter(event => event.eventType === 'carbs');
+
+            // Group by day
+            const dailyCarbs: Record<string, number> = {};
+
+            carbEvents.forEach(event => {
+                const date = new Date(event.systemTime);
+                const dateString = date.toISOString().split('T')[0]; // YYYY-MM-DD
+
+                // Convert value to number (it's stored as string in the API)
+                const carbValue = parseFloat(event.value) || 0;
+
+                // Add to daily total
+                dailyCarbs[dateString] = (dailyCarbs[dateString] || 0) + carbValue;
+            });
+
+            // Sort dates
+            const sortedDates = Object.keys(dailyCarbs).sort();
+
+            return {
+                dates: sortedDates,
+                carbs: sortedDates.map(date => dailyCarbs[date])
+            };
+        } catch (error) {
+            console.error('Error fetching nutrition data:', error);
+            return {
+                dates: [],
+                carbs: []
+            };
+        }
+    }
+
+    async getInsulinData(days: number = 7): Promise<{
+        dates: string[];
+        fastActing: number[];
+        longActing: number[];
+    }> {
+        try {
+            const events = await this.getLatestEvents(days);
+
+            // Filter for insulin events only
+            const insulinEvents = events.filter(event => event.eventType === 'insulin');
+
+            // Group by day and insulin type
+            const dailyFastActing: Record<string, number> = {};
+            const dailyLongActing: Record<string, number> = {};
+
+            insulinEvents.forEach(event => {
+                const date = new Date(event.systemTime);
+                const dateString = date.toISOString().split('T')[0]; // YYYY-MM-DD
+
+                // Convert value to number (it's stored as string in the API)
+                const insulinValue = parseFloat(event.value) || 0;
+
+                // Add to appropriate daily total based on subtype
+                if (event.eventSubType === 'fastActing') {
+                    dailyFastActing[dateString] = (dailyFastActing[dateString] || 0) + insulinValue;
+                } else if (event.eventSubType === 'longActing') {
+                    dailyLongActing[dateString] = (dailyLongActing[dateString] || 0) + insulinValue;
+                }
+            });
+
+            // Sort dates (combine all dates from both types)
+            const allDates = new Set([...Object.keys(dailyFastActing), ...Object.keys(dailyLongActing)]);
+            const sortedDates = Array.from(allDates).sort();
+
+            return {
+                dates: sortedDates,
+                fastActing: sortedDates.map(date => dailyFastActing[date] || 0),
+                longActing: sortedDates.map(date => dailyLongActing[date] || 0)
+            };
+        } catch (error) {
+            console.error('Error fetching insulin data:', error);
+            return {
+                dates: [],
+                fastActing: [],
+                longActing: []
+            };
         }
     }
 } 

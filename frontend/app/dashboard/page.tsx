@@ -4,6 +4,8 @@ import { UserButton } from "@clerk/nextjs";
 import GlucoseChart from "../../components/GlucoseChart";
 import AIChat from "../../components/AIChat";
 import DexcomStatus from "../../components/DexcomStatus";
+import WeeklyBloodSugarChart from "../../components/WeeklyBloodSugarChart";
+import TimeOfDayBloodSugarChart from "../../components/TimeOfDayBloodSugarChart";
 import { BsGraphUp, BsBell } from 'react-icons/bs';
 import { FiSettings, FiActivity } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
@@ -71,6 +73,11 @@ export default function Dashboard() {
                             <h2 className="text-xl font-semibold text-gray-800 mb-4">Glucose Trends</h2>
                             <GlucoseChart />
                         </div>
+
+                        {/* Weekly Blood Sugar Chart */}
+                        <div className="mt-6">
+                            <WeeklyBloodSugarChart />
+                        </div>
                     </div>
 
                     {/* Right Column - AI Insights */}
@@ -107,29 +114,7 @@ export default function Dashboard() {
                 <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                         <h2 className="text-xl font-semibold text-gray-800 mb-4">Time of Day Analysis</h2>
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Morning</span>
-                                <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: '70%' }}></div>
-                                </div>
-                                <span className="text-gray-600">140 mg/dL</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Afternoon</span>
-                                <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: '85%' }}></div>
-                                </div>
-                                <span className="text-gray-600">125 mg/dL</span>
-                            </div>
-                            <div className="flex items-center justify-between">
-                                <span className="text-gray-600">Evening</span>
-                                <div className="w-2/3 bg-gray-200 rounded-full h-2">
-                                    <div className="bg-blue-600 h-2 rounded-full" style={{ width: '60%' }}></div>
-                                </div>
-                                <span className="text-gray-600">145 mg/dL</span>
-                            </div>
-                        </div>
+                        <TimeOfDayBloodSugarChart />
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">

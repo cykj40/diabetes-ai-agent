@@ -52,256 +52,169 @@ export class DiabetesAgent {
     }
 
     private async initializeAgent() {
-        // Create tools for the agent
-        const getDexcomDataTool = new DynamicStructuredTool({
-            name: "get_blood_sugar",
-            description: "Get the current blood sugar reading and recent history from Dexcom",
+        // Create a unified Dexcom tool with multiple functions
+        const dexcomTool = new DynamicStructuredTool({
+            name: "dexcom_api",
+            description: "Interact with Dexcom API to get blood sugar data, analyze patterns, and provide insights. This tool can handle various types of queries related to blood sugar data.",
             schema: z.object({
-                count: z.number().optional().describe("Number of readings to fetch, defaults to 48")
-            }),
-            func: async (input) => {
-                try {
-                    const count = input.count || 48;
-                    const readings = await this.dexcomService.getLatestReadings(count);
-
-                    // Store readings for pattern analysis
-                    for (const reading of readings) {
-                        await this.patternAnalysis.storeReading(reading, 'default');
-                    }
-
-                    // Calculate current stats
-                    const currentReading = readings[0];
-                    const average = readings.reduce((sum, r) => sum + r.value, 0) / readings.length;
-                    const min = Math.min(...readings.map(r => r.value));
-                    const max = Math.max(...readings.map(r => r.value));
-
-                    return JSON.stringify({
-                        current: currentReading,
-                        readings: readings,
-                        stats: {
-                            average,
-                            min,
-                            max,
-                            count: readings.length,
-                            timeRange: `${new Date(readings[readings.length - 1].timestamp).toLocaleString()} to ${new Date(readings[0].timestamp).toLocaleString()}`
-                        }
-                    });
-                } catch (error) {
-                    console.error("Error fetching blood sugar data:", error);
-                    return JSON.stringify({
-                        error: "Failed to fetch blood sugar data",
-                        message: error instanceof Error ? error.message : "Unknown error"
-                    });
-                }
-            },
-        });
-
-        const analyzeBloodSugarTool = new DynamicStructuredTool({
-            name: "analyze_blood_sugar",
-            description: "Analyze blood sugar data and provide insights",
-            schema: z.object({
-                data: z.string().describe("Blood sugar data to analyze"),
-            }),
-            func: async (input) => {
-                try {
-                    const analysis = await this.aiService.analyzeBloodSugar({ content: input.data });
-                    return JSON.stringify(analysis);
-                } catch (error) {
-                    console.error("Error analyzing blood sugar data:", error);
-                    return JSON.stringify({
-                        error: "Failed to analyze blood sugar data",
-                        message: error instanceof Error ? error.message : "Unknown error"
-                    });
-                }
-            },
-        });
-
-        const getPatternsTool = new DynamicStructuredTool({
-            name: "get_patterns",
-            description: "Get historical blood sugar patterns and trends analysis",
-            schema: z.object({
+                action: z.enum([
+                    "get_current_reading",
+                    "get_recent_readings",
+                    "get_daily_patterns",
+                    "get_weekly_patterns",
+                    "analyze_time_period"
+                ]).describe("The specific action to perform with the Dexcom API"),
+                count: z.number().optional().describe("Number of readings to fetch, defaults to 48"),
                 days: z.number().optional().describe("Number of days to analyze, defaults to 7"),
+                period: z.enum(["day", "week", "month"]).optional().describe("Time period to analyze"),
                 sessionId: z.string().optional().describe("Session ID for the user, defaults to 'default'")
             }),
             func: async (input) => {
                 try {
                     const sessionId = input.sessionId || 'default';
-                    const days = input.days || 7;
 
-                    const timeOfDay = await this.patternAnalysis.getTimeOfDayAnalysis(sessionId, days);
-                    const weeklyTrends = await this.patternAnalysis.getWeeklyPatterns(sessionId);
-                    const patterns = await this.patternAnalysis.identifyPatterns(sessionId);
+                    switch (input.action) {
+                        case "get_current_reading": {
+                            // Get just the latest reading
+                            const readings = await this.dexcomService.getLatestReadings(1);
+                            if (readings.length === 0) {
+                                return JSON.stringify({
+                                    error: "No readings available"
+                                });
+                            }
+                            return JSON.stringify({
+                                current: readings[0],
+                                timestamp: new Date(readings[0].timestamp).toLocaleString()
+                            });
+                        }
 
-                    return JSON.stringify({
-                        timeOfDay,
-                        weeklyTrends,
-                        patterns,
-                        analyzedDays: days
-                    });
-                } catch (error) {
-                    console.error("Error fetching patterns:", error);
-                    return JSON.stringify({
-                        error: "Failed to fetch patterns",
-                        message: error instanceof Error ? error.message : "Unknown error"
-                    });
-                }
-            },
-        });
+                        case "get_recent_readings": {
+                            // Get multiple recent readings
+                            const count = input.count || 48;
+                            const readings = await this.dexcomService.getLatestReadings(count);
 
-        const getDeviceInfoTool = new DynamicStructuredTool({
-            name: "get_device_info",
-            description: "Get information about the user's Dexcom devices",
-            schema: z.object({}),
-            func: async () => {
-                try {
-                    const devices = await this.dexcomService.getDevices();
-                    return JSON.stringify(devices);
-                } catch (error) {
-                    console.error("Error fetching device info:", error);
-                    return JSON.stringify({
-                        error: "Failed to fetch device info",
-                        message: error instanceof Error ? error.message : "Unknown error"
-                    });
-                }
-            },
-        });
+                            // Store readings for pattern analysis
+                            for (const reading of readings) {
+                                await this.patternAnalysis.storeReading(reading, sessionId);
+                            }
 
-        const saveContextTool = new DynamicStructuredTool({
-            name: "save_context",
-            description: "Save important context about the user for future reference",
-            schema: z.object({
-                sessionId: z.string().describe("Session ID for the user"),
-                key: z.string().describe("Key for the context item"),
-                value: z.string().describe("Value to store"),
-            }),
-            func: async (input) => {
-                try {
-                    if (!this.sessionContexts.has(input.sessionId)) {
-                        this.sessionContexts.set(input.sessionId, {});
+                            // Calculate stats
+                            const average = readings.reduce((sum, r) => sum + r.value, 0) / readings.length;
+                            const min = Math.min(...readings.map(r => r.value));
+                            const max = Math.max(...readings.map(r => r.value));
+
+                            return JSON.stringify({
+                                readings: readings,
+                                stats: {
+                                    average,
+                                    min,
+                                    max,
+                                    count: readings.length,
+                                    timeRange: `${new Date(readings[readings.length - 1].timestamp).toLocaleString()} to ${new Date(readings[0].timestamp).toLocaleString()}`
+                                }
+                            });
+                        }
+
+                        case "get_daily_patterns": {
+                            // Get time-of-day patterns
+                            const days = input.days || 7;
+                            const timeOfDay = await this.patternAnalysis.getTimeOfDayAnalysis(sessionId, days);
+
+                            return JSON.stringify({
+                                timeOfDay,
+                                analyzedDays: days
+                            });
+                        }
+
+                        case "get_weekly_patterns": {
+                            // Get day-of-week patterns
+                            const weeklyTrends = await this.patternAnalysis.getWeeklyPatterns(sessionId);
+
+                            return JSON.stringify({
+                                weeklyTrends
+                            });
+                        }
+
+                        case "analyze_time_period": {
+                            // Comprehensive analysis for a time period
+                            const days = input.days || (input.period === "day" ? 1 : input.period === "week" ? 7 : 30);
+
+                            // Get readings
+                            const readings = await this.dexcomService.getLatestReadings(days * 48); // ~48 readings per day
+
+                            // Store readings for pattern analysis
+                            for (const reading of readings) {
+                                await this.patternAnalysis.storeReading(reading, sessionId);
+                            }
+
+                            // Get patterns
+                            const timeOfDay = await this.patternAnalysis.getTimeOfDayAnalysis(sessionId, days);
+                            const weeklyTrends = await this.patternAnalysis.getWeeklyPatterns(sessionId);
+                            const patterns = await this.patternAnalysis.identifyPatterns(sessionId);
+
+                            // Get AI analysis
+                            const readingsData = JSON.stringify(readings);
+                            const analysis = await this.aiService.analyzeBloodSugar({ content: readingsData });
+
+                            return JSON.stringify({
+                                readings: readings.slice(0, 10), // Just include the most recent 10 readings
+                                timeOfDay,
+                                weeklyTrends,
+                                patterns,
+                                analysis,
+                                analyzedDays: days,
+                                period: input.period || (days === 1 ? "day" : days === 7 ? "week" : "month")
+                            });
+                        }
+
+                        default:
+                            return JSON.stringify({
+                                error: "Invalid action specified"
+                            });
                     }
-
-                    const context = this.sessionContexts.get(input.sessionId);
-                    context[input.key] = input.value;
-
-                    return JSON.stringify({ success: true, message: `Saved ${input.key} to context` });
                 } catch (error) {
-                    console.error("Error saving context:", error);
+                    console.error("Error in dexcom_api tool:", error);
                     return JSON.stringify({
-                        error: "Failed to save context",
+                        error: "Failed to process Dexcom data",
                         message: error instanceof Error ? error.message : "Unknown error"
                     });
                 }
             },
         });
 
-        const getContextTool = new DynamicStructuredTool({
-            name: "get_context",
-            description: "Retrieve important context about the user",
-            schema: z.object({
-                sessionId: z.string().describe("Session ID for the user"),
-                key: z.string().optional().describe("Key for the context item, if omitted returns all context"),
-            }),
-            func: async (input) => {
-                try {
-                    if (!this.sessionContexts.has(input.sessionId)) {
-                        return JSON.stringify({ message: "No context found for this session" });
-                    }
+        // Create the agent with a more specific system prompt
+        const systemPrompt = `You are a diabetes management assistant that helps users understand their blood sugar data.
 
-                    const context = this.sessionContexts.get(input.sessionId);
+IMPORTANT INSTRUCTIONS:
+1. When the user asks about their current blood sugar, use dexcom_api with action="get_current_reading".
+2. When the user asks about recent readings, use dexcom_api with action="get_recent_readings".
+3. When the user asks about daily patterns (morning vs evening), use dexcom_api with action="get_daily_patterns".
+4. When the user asks about weekly patterns (which days are better/worse), use dexcom_api with action="get_weekly_patterns".
+5. When the user asks for comprehensive analysis over a time period, use dexcom_api with action="analyze_time_period".
+6. Be concise but informative in your responses.
+7. Always interpret the blood sugar values in mg/dL.
+8. Normal range for blood sugar is typically 70-180 mg/dL.
+9. For current readings, mention the current value, trend, and time.
+10. For pattern analysis, highlight notable trends, potential issues, and improvements.
 
-                    if (input.key) {
-                        return JSON.stringify({
-                            [input.key]: context[input.key] || "Not found"
-                        });
-                    }
+Remember to be supportive and helpful, focusing on providing actionable insights about the user's diabetes management.`;
 
-                    return JSON.stringify(context);
-                } catch (error) {
-                    console.error("Error retrieving context:", error);
-                    return JSON.stringify({
-                        error: "Failed to retrieve context",
-                        message: error instanceof Error ? error.message : "Unknown error"
-                    });
-                }
-            },
-        });
-
-        const tools = [
-            getDexcomDataTool,
-            analyzeBloodSugarTool,
-            getPatternsTool,
-            getDeviceInfoTool,
-            saveContextTool,
-            getContextTool
-        ];
-
-        // Create the agent prompt with enhanced memory context
         const prompt = ChatPromptTemplate.fromMessages([
-            ["system", `You are DiabetesAI, an advanced diabetes management assistant with memory of past interactions and pattern recognition capabilities.
-
-            Your primary goal is to help users manage their diabetes by providing personalized insights, answering questions, and offering actionable recommendations based on their blood sugar data.
-
-            You have access to:
-            1. Real-time blood sugar data from Dexcom CGM devices
-            2. Historical pattern analysis including:
-               - Time of day trends (morning, afternoon, evening, night)
-               - Weekly patterns (day-by-day averages and volatility)
-               - Risk period identification (high and low glucose events)
-               - Stable periods (when glucose is well-controlled)
-            3. Previous conversations and known patient history
-            4. Device information from connected Dexcom devices
-
-            When analyzing blood sugar:
-            - Start with current readings and immediate concerns
-            - Compare with historical patterns
-            - Consider time of day and day of week trends
-            - Look for recurring patterns in high/low periods
-            - Account for previous discussions and known patient behaviors
-            - Provide personalized recommendations based on historical success/failure patterns
-            
-            Always maintain context from previous conversations and use it to:
-            - Recognize recurring issues
-            - Track improvement or deterioration in specific areas
-            - Adjust recommendations based on what has/hasn't worked
-            - Provide consistent, contextual advice
-
-            If you detect concerning patterns or readings:
-            1. Highlight them clearly
-            2. Compare with historical data
-            3. Suggest specific, actionable improvements
-            4. Reference previous similar situations and their outcomes
-
-            Normal blood sugar range is typically 70-180 mg/dL:
-            - Below 70 mg/dL: Hypoglycemia (low blood sugar)
-            - 70-180 mg/dL: Target range
-            - Above 180 mg/dL: Hyperglycemia (high blood sugar)
-
-            Dexcom trend arrows indicate rate of change:
-            - ↑↑: Rising rapidly (>3 mg/dL/min)
-            - ↑: Rising (2-3 mg/dL/min)
-            - ↗: Rising slightly (1-2 mg/dL/min)
-            - →: Stable (< 1 mg/dL/min)
-            - ↘: Falling slightly (1-2 mg/dL/min)
-            - ↓: Falling (2-3 mg/dL/min)
-            - ↓↓: Falling rapidly (>3 mg/dL/min)
-
-            Be empathetic, supportive, and educational in your responses. Avoid medical jargon when possible, and explain concepts clearly. Remember that while you can provide insights and suggestions, you should remind users to consult healthcare professionals for medical advice.`],
+            ["system", systemPrompt],
             ["human", "{input}"],
-            ["ai", "I'll help you manage your diabetes with personalized insights based on your data."],
-            ["human", "{chat_history}"],
-            ["ai", "{agent_scratchpad}"],
+            ["ai", "{agent_scratchpad}"]
         ]);
 
-        // Create the agent
+        // Create the agent with the tools
         const agent = await createOpenAIFunctionsAgent({
             llm: this.llm,
-            tools,
-            prompt,
+            tools: [dexcomTool],
+            prompt
         });
 
         this.agent = new AgentExecutor({
             agent,
-            tools,
+            tools: [dexcomTool],
             memory: this.memory,
             returnIntermediateSteps: true,
             maxIterations: 5,

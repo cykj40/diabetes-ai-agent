@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { BsSend, BsRobot } from 'react-icons/bs';
+import React, { useState, useRef, useEffect } from 'react';
+import { BsSend, BsRobot, BsArrowRepeat, BsTrash } from 'react-icons/bs';
 import { FaUser } from 'react-icons/fa';
 import BloodSugarCharts from './BloodSugarCharts';
 
@@ -26,6 +26,8 @@ export default function AIChat() {
     const [input, setInput] = useState('');
     const [messages, setMessages] = useState<Message[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [sessionId, setSessionId] = useState(`session-${Date.now()}`);
+    const [isEmbedding, setIsEmbedding] = useState(false);
     const chatContainerRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom when new messages arrive
@@ -34,6 +36,55 @@ export default function AIChat() {
             chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
         }
     }, [messages]);
+
+    // Initialize with a welcome message and fetch chat history
+    useEffect(() => {
+        setMessages([{
+            id: '1',
+            text: "Hello! I'm your diabetes assistant. Ask me anything about your blood sugar data.",
+            sender: 'ai',
+            timestamp: new Date().toLocaleTimeString()
+        }]);
+
+        // Fetch chat history when component mounts
+        fetchChatHistory();
+    }, []);
+
+    const fetchChatHistory = async () => {
+        try {
+            const response = await fetch(`/api/chat/history/${sessionId}`);
+            if (response.ok) {
+                const data = await response.json();
+                if (data.chatHistory && data.chatHistory.length > 0) {
+                    setMessages(data.chatHistory);
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching chat history:', error);
+        }
+    };
+
+    const clearChatHistory = async () => {
+        try {
+            setIsLoading(true);
+            const response = await fetch(`/api/chat/history/${sessionId}`, {
+                method: 'DELETE',
+            });
+
+            if (response.ok) {
+                setMessages([{
+                    id: Date.now().toString(),
+                    text: "Chat history cleared. How can I help you today?",
+                    sender: 'ai',
+                    timestamp: new Date().toLocaleTimeString()
+                }]);
+            }
+        } catch (error) {
+            console.error('Error clearing chat history:', error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     const sendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -53,12 +104,16 @@ export default function AIChat() {
         try {
             console.log('Sending message to API:', input);
 
+            // Use the chat endpoint
             const response = await fetch('/api/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify({ message: input }),
+                body: JSON.stringify({
+                    message: input,
+                    sessionId: sessionId
+                }),
             });
 
             const data = await response.json();
@@ -68,20 +123,17 @@ export default function AIChat() {
                 throw new Error(data.details || data.error || 'Failed to get response');
             }
 
-            if (!data.text && !data.message) {
-                console.error('Invalid response format:', data);
-                throw new Error('Invalid response format from server');
-            }
-
+            // Format the AI response
             const aiMessage: Message = {
                 id: (Date.now() + 1).toString(),
-                text: data.text || data.message,
+                text: data.message || "I've analyzed your request and here's my response.",
                 sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-                chartData: data.chartData
+                timestamp: new Date().toLocaleTimeString()
             };
 
-            setMessages(prev => [...prev, aiMessage]);
+            // Update messages with just the latest AI response
+            // (The full history is already managed by the backend)
+            setMessages(prev => [...prev.slice(0, prev.length - 1), userMessage, aiMessage]);
         } catch (error) {
             console.error('Error in sendMessage:', error);
             setMessages(prev => [...prev, {
@@ -97,8 +149,71 @@ export default function AIChat() {
         }
     };
 
+    const embedBloodSugarData = async () => {
+        setIsEmbedding(true);
+        try {
+            // Call the embed endpoint
+            const response = await fetch('/api/chat/embed-blood-sugar', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    days: 7 // Embed the last 7 days of data
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Failed to embed blood sugar data');
+            }
+
+            // Add a system message about the embedding
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                text: `${data.message} You can now ask questions about your recent blood sugar data.`,
+                sender: 'ai',
+                timestamp: new Date().toLocaleTimeString()
+            }]);
+        } catch (error) {
+            console.error('Error embedding blood sugar data:', error);
+            setMessages(prev => [...prev, {
+                id: Date.now().toString(),
+                text: error instanceof Error
+                    ? `Error embedding data: ${error.message}`
+                    : 'Sorry, I encountered an error while embedding your blood sugar data.',
+                sender: 'ai',
+                timestamp: new Date().toLocaleTimeString()
+            }]);
+        } finally {
+            setIsEmbedding(false);
+        }
+    };
+
     return (
         <div className="flex flex-col h-[600px] bg-gray-50 rounded-lg shadow-sm">
+            <div className="flex justify-between items-center p-4 border-b">
+                <h2 className="text-lg font-semibold">AI Assistant</h2>
+                <div className="flex space-x-2">
+                    <button
+                        onClick={embedBloodSugarData}
+                        disabled={isEmbedding || isLoading}
+                        className="flex items-center text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400"
+                    >
+                        <BsArrowRepeat className={`mr-1 ${isEmbedding ? 'animate-spin' : ''}`} />
+                        Update Data
+                    </button>
+                    <button
+                        onClick={clearChatHistory}
+                        disabled={isLoading}
+                        className="flex items-center text-sm text-red-600 hover:text-red-800 disabled:text-gray-400"
+                    >
+                        <BsTrash className="mr-1" />
+                        Clear Chat
+                    </button>
+                </div>
+            </div>
             <div
                 ref={chatContainerRef}
                 className="flex-1 overflow-y-auto p-4 space-y-4"
@@ -159,8 +274,8 @@ export default function AIChat() {
                     />
                     <button
                         type="submit"
-                        disabled={isLoading}
-                        className={`px-4 py-2 rounded-lg bg-blue-500 text-white flex items-center space-x-2 ${isLoading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-600'
+                        disabled={isLoading || isEmbedding}
+                        className={`px-4 py-2 rounded-lg bg-blue-500 text-white flex items-center space-x-2 ${(isLoading || isEmbedding) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-600'
                             }`}
                     >
                         <span>Send</span>

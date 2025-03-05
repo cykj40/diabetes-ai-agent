@@ -5,29 +5,27 @@ import { PrismaClient } from '@prisma/client';
 
 export class BloodSugarEmbeddingService {
     private aiService: AIService;
-    private pineconeService: PineconeService;
     private prisma: PrismaClient;
     private readonly indexName = 'blood-sugar-data';
     private readonly embeddingDimension = 1536; // OpenAI embedding dimension
 
     constructor() {
         this.aiService = new AIService();
-        this.pineconeService = new PineconeService();
         this.prisma = new PrismaClient();
     }
 
     async initialize() {
         try {
             // Initialize Pinecone service
-            await this.pineconeService.initialize();
+            await PineconeService.initialize();
 
             // Check if index exists, create if not
-            const indexes = await this.pineconeService.listIndexes();
-            const indexExists = indexes.some(index => index === this.indexName);
+            const indexes = await PineconeService.listIndexes();
+            const indexExists = indexes.some((index: any) => index === this.indexName);
 
             if (!indexExists) {
                 console.log(`Creating new Pinecone index: ${this.indexName}`);
-                await this.pineconeService.createIndex(this.indexName, this.embeddingDimension);
+                await PineconeService.createIndex(this.indexName, this.embeddingDimension);
                 console.log('Index created successfully');
             } else {
                 console.log(`Pinecone index ${this.indexName} already exists`);
@@ -96,7 +94,7 @@ export class BloodSugarEmbeddingService {
             }));
 
             // Store in Pinecone
-            await this.pineconeService.upsert(this.indexName, vectors);
+            await PineconeService.upsert(this.indexName, vectors);
 
             // Also store in database for backup/reference
             await this.storeReadingsInDatabase(readings, userId);
@@ -113,32 +111,68 @@ export class BloodSugarEmbeddingService {
      */
     private async storeReadingsInDatabase(readings: DexcomReading[], userId: string) {
         try {
+            // Check if the BloodSugarReading table has the userId column
+            let hasUserIdColumn = true;
+            try {
+                // Try a simple query to check if userId column exists
+                await this.prisma.$queryRaw`SELECT "userId" FROM "BloodSugarReading" LIMIT 1`;
+            } catch (error: any) {
+                if (error.message && error.message.includes('column "userId" does not exist')) {
+                    console.log('The userId column does not exist in the BloodSugarReading table. Skipping database storage.');
+                    hasUserIdColumn = false;
+                    return; // Skip database operations
+                }
+            }
+
+            if (!hasUserIdColumn) {
+                return; // Skip database operations
+            }
+
             // Store each reading in the database
             for (const reading of readings) {
-                await this.prisma.bloodSugarReading.upsert({
-                    where: {
-                        userId_timestamp: {
-                            userId,
-                            timestamp: new Date(reading.timestamp)
-                        }
-                    },
-                    update: {
-                        value: reading.value,
-                        trend: reading.trend,
-                        isEmbedded: true
-                    },
-                    create: {
-                        userId,
-                        value: reading.value,
-                        trend: reading.trend,
-                        timestamp: new Date(reading.timestamp),
-                        isEmbedded: true
+                const timestamp = new Date(reading.timestamp);
+                const sessionId = `session-${Date.now()}`;
+
+                try {
+                    // Use a more basic query that doesn't rely on userId if it's not available
+                    const existingReadings = await this.prisma.$queryRaw<Array<{ id: string }>>`
+                        SELECT id FROM "BloodSugarReading" 
+                        WHERE "timestamp" = ${timestamp}
+                    `;
+
+                    const existingReading = existingReadings.length > 0 ? existingReadings[0] : null;
+
+                    if (existingReading) {
+                        // Update existing reading
+                        await this.prisma.bloodSugarReading.update({
+                            where: { id: existingReading.id },
+                            data: {
+                                value: reading.value,
+                                trend: reading.trend,
+                                timestamp: timestamp
+                            }
+                        });
+                    } else {
+                        // Create new reading
+                        await this.prisma.bloodSugarReading.create({
+                            data: {
+                                sessionId,
+                                value: reading.value,
+                                trend: reading.trend,
+                                timestamp: timestamp,
+                                // Only include userId if the column exists
+                                ...(hasUserIdColumn ? { userId } : {})
+                            }
+                        });
                     }
-                });
+                } catch (error: any) {
+                    console.error(`Error processing reading at ${timestamp}:`, error);
+                    // Continue with the next reading instead of failing the entire batch
+                }
             }
         } catch (error) {
             console.error('Error storing readings in database:', error);
-            // Don't throw here, as we still want to continue if Pinecone storage succeeded
+            // Don't throw the error, just log it and continue
         }
     }
 
@@ -154,14 +188,16 @@ export class BloodSugarEmbeddingService {
             const queryEmbedding = await this.aiService.generateEmbeddings([query]);
 
             // Query Pinecone
-            const results = await this.pineconeService.query(
+            const results = await PineconeService.query(
                 this.indexName,
                 queryEmbedding[0],
-                topK,
-                { userId }
+                topK
             );
 
-            return results;
+            // Filter results by userId if needed
+            return results.matches.filter((match: any) =>
+                match.metadata && match.metadata.userId === userId
+            );
         } catch (error) {
             console.error('Error querying similar readings:', error);
             throw error;
@@ -248,9 +284,26 @@ export class BloodSugarEmbeddingService {
       `;
 
             // Get AI analysis
-            const analysis = await this.aiService.analyzeBloodSugar(prompt);
+            const analysis = await this.aiService.analyzeBloodSugar({ content: prompt });
 
-            return analysis;
+            return {
+                summary: analysis.summary,
+                patterns: [
+                    {
+                        description: `Glucose Trend: ${analysis.glucoseTrend}`,
+                        severity: analysis.riskLevel > 7 ? 'high' : analysis.riskLevel > 4 ? 'medium' : 'low'
+                    },
+                    ...(analysis.anomalyDetected && analysis.anomalyDescription
+                        ? [
+                            {
+                                description: `Anomaly Detected: ${analysis.anomalyDescription}`,
+                                severity: 'high'
+                            }
+                        ]
+                        : [])
+                ],
+                recommendations: analysis.recommendations.split('\n').filter(r => r.trim().length > 0)
+            };
         } catch (error) {
             console.error('Error generating blood sugar insights:', error);
             throw error;

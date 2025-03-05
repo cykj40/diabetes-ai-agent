@@ -9,18 +9,9 @@ export async function POST(request: NextRequest) {
         }
 
         const body = await request.json();
-        const { message } = body;
-
-        if (!message) {
-            return NextResponse.json(
-                { error: 'Message is required' },
-                { status: 400 }
-            );
-        }
-
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-        const response = await fetch(`${backendUrl}/api/ai/chat`, {
+        const response = await fetch(`${backendUrl}/api/ai/embed-blood-sugar`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -41,7 +32,7 @@ export async function POST(request: NextRequest) {
         console.error('API route error:', error);
         return NextResponse.json(
             {
-                error: 'Failed to process message',
+                error: 'Failed to embed blood sugar data',
                 details: error instanceof Error ? error.message : 'Unknown error'
             },
             { status: 500 }

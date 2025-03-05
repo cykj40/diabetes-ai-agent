@@ -5,152 +5,187 @@ dotenv.config();
 
 export class PineconeService {
     private static client: Pinecone;
-    private static readonly HEALTH_INDEX = 'health-data-embeddings';
 
     static async initialize() {
-        if (!process.env.PINECONE_API_KEY || !process.env.PINECONE_ENVIRONMENT) {
-            throw new Error('Missing Pinecone configuration');
+        if (!process.env.PINECONE_API_KEY) {
+            throw new Error('Missing Pinecone API key');
         }
 
-        this.client = new Pinecone({
-            apiKey: process.env.PINECONE_API_KEY,
-            environment: process.env.PINECONE_ENVIRONMENT
-        });
+        try {
+            console.log('Initializing Pinecone client...');
+            this.client = new Pinecone({
+                apiKey: process.env.PINECONE_API_KEY
+            });
+            console.log('Pinecone client initialized successfully');
+
+            // Test the connection by listing indexes
+            const indexes = await this.listIndexes();
+            console.log('Connection test successful. Available indexes:', indexes);
+        } catch (error) {
+            console.error('Error initializing Pinecone client:', error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
-    // ... rest of the code
     static async createIndex(indexName: string, dimension: number) {
-        const index = this.client.Index(indexName);
-        await index.create({
-            dimension,
-            metric: 'cosine'
-        });
+        try {
+            console.log(`Creating index ${indexName} with dimension ${dimension}...`);
+            console.log('Using serverless configuration with AWS us-east-1 region');
+
+            await this.client.createIndex({
+                name: indexName,
+                dimension: dimension,
+                metric: 'cosine',
+                spec: {
+                    serverless: {
+                        cloud: 'aws',
+                        region: 'us-east-1'  // East Coast AWS region for serverless
+                    }
+                },
+                waitUntilReady: true
+            });
+
+            console.log(`Index ${indexName} created successfully`);
+        } catch (error) {
+            console.error(`Error creating index ${indexName}:`, error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
     static async deleteIndex(indexName: string) {
-        const index = this.client.Index(indexName);
-        await index.delete();
+        try {
+            console.log(`Deleting index ${indexName}...`);
+            await this.client.deleteIndex(indexName);
+            console.log(`Index ${indexName} deleted successfully`);
+        } catch (error) {
+            console.error(`Error deleting index ${indexName}:`, error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
     static async listIndexes() {
-        const indexes = await this.client.listIndexes();
-        return indexes;
+        try {
+            console.log('Listing available indexes...');
+            const response = await this.client.listIndexes();
+            const indexNames = response.indexes?.map(index => index.name) || [];
+            console.log('Available indexes:', indexNames);
+            return indexNames;
+        } catch (error) {
+            console.error('Error listing indexes:', error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
     static async describeIndex(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.describe();
+        try {
+            console.log(`Describing index ${indexName}...`);
+            const response = await this.client.describeIndex(indexName);
+            console.log(`Index ${indexName} description:`, response);
+            return response;
+        } catch (error) {
+            console.error(`Error describing index ${indexName}:`, error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
     static async upsert(indexName: string, vectors: any[]) {
-        const index = this.client.Index(indexName);
-        await index.upsert(vectors);
+        try {
+            console.log(`Upserting ${vectors.length} vectors to index ${indexName}...`);
+            const index = this.client.index(indexName);
+            await index.upsert(vectors);
+            console.log(`Upserted ${vectors.length} vectors to index ${indexName} successfully`);
+        } catch (error) {
+            console.error(`Error upserting vectors to index ${indexName}:`, error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
-    static async query(indexName: string, queryVector: number[], topK: number = 10) {
-        const index = this.client.Index(indexName);
-        return index.query({ vector: queryVector, topK });
+    static async query(indexName: string, queryVector: number[], topK: number = 10, filter?: any) {
+        try {
+            console.log(`Querying index ${indexName} with topK=${topK}...`);
+            const index = this.client.index(indexName);
+            const queryRequest: any = {
+                topK,
+                vector: queryVector,
+                includeMetadata: true
+            };
+
+            if (filter) {
+                queryRequest.filter = filter;
+                console.log('Using filter:', filter);
+            }
+
+            const results = await index.query(queryRequest);
+            console.log(`Query returned ${results.matches?.length || 0} matches`);
+            return results;
+        } catch (error) {
+            console.error(`Error querying index ${indexName}:`, error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
     static async delete(indexName: string, ids: string[]) {
-        const index = this.client.Index(indexName);
-        await index.delete(ids);
+        try {
+            console.log(`Deleting ${ids.length} vectors from index ${indexName}...`);
+            const index = this.client.index(indexName);
+            await index.deleteMany(ids);
+            console.log(`Deleted ${ids.length} vectors from index ${indexName} successfully`);
+        } catch (error) {
+            console.error(`Error deleting vectors from index ${indexName}:`, error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
 
-    static async describeIndexStats(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.describeIndexStats();
+    // New method for generating embeddings using Pinecone's Inference API
+    static async generateEmbeddings(texts: string[], model: string = 'multilingual-e5-large') {
+        try {
+            console.log(`Generating embeddings for ${texts.length} texts using model ${model}...`);
+            const embeddings = await this.client.inference.embed(
+                model,
+                texts,
+                { inputType: 'passage', truncate: 'END' }
+            );
+            console.log(`Generated embeddings for ${texts.length} texts successfully`);
+            return embeddings;
+        } catch (error) {
+            console.error('Error generating embeddings:', error);
+            if (error instanceof Error) {
+                console.error('Error message:', error.message);
+                console.error('Error stack:', error.stack);
+            }
+            throw error;
+        }
     }
-
-    static async listNamespaces(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.listNamespaces();
-    }
-
-    static async describeNamespace(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        return index.describeNamespace(namespace);
-    }
-
-    static async deleteNamespace(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        await index.deleteNamespace(namespace);
-    }
-
-    static async listAllVectors(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.listAllVectors();
-    }
-
-    static async describeVector(indexName: string, vectorId: string) {
-        const index = this.client.Index(indexName);
-        return index.describeVector(vectorId);
-    }
-
-    static async deleteVector(indexName: string, vectorId: string) {
-        const index = this.client.Index(indexName);
-        await index.deleteVector(vectorId);
-    }
-
-    static async listAllNamespaces(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.listAllNamespaces();
-    }
-
-    static async describeNamespaceStats(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        return index.describeNamespaceStats(namespace);
-    }
-
-    static async listAllVectorsWithNamespace(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        return index.listAllVectorsWithNamespace(namespace);
-    }
-
-    static async describeVectorWithNamespace(indexName: string, namespace: string, vectorId: string) {
-        const index = this.client.Index(indexName);
-        return index.describeVectorWithNamespace(namespace, vectorId);
-    }
-
-    static async deleteVectorWithNamespace(indexName: string, namespace: string, vectorId: string) {
-        const index = this.client.Index(indexName);
-        await index.deleteVectorWithNamespace(namespace, vectorId);
-    }
-
-    static async listAllNamespacesWithIndex(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.listAllNamespaces();
-    }
-
-    static async describeNamespaceWithIndex(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        return index.describeNamespace(namespace);
-    }
-
-    static async deleteNamespaceWithIndex(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        await index.deleteNamespace(namespace);
-    }
-
-    static async listAllVectorsWithIndex(indexName: string) {
-        const index = this.client.Index(indexName);
-        return index.listAllVectors();
-    }
-
-    static async describeVectorWithIndex(indexName: string, vectorId: string) {
-        const index = this.client.Index(indexName);
-        return index.describeVector(vectorId);
-    }
-
-    static async deleteVectorWithIndex(indexName: string, vectorId: string) {
-        const index = this.client.Index(indexName);
-        await index.deleteVector(vectorId);
-    }
-
-    static async listAllVectorsWithIndexAndNamespace(indexName: string, namespace: string) {
-        const index = this.client.Index(indexName);
-        return index.listAllVectorsWithNamespace(namespace);
-    }
-
-
 } 

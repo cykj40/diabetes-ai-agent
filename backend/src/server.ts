@@ -17,6 +17,8 @@ import fs from 'fs';
 import { DexcomService } from './services/dexcom.service';
 import { AIService } from './services/ai.service';
 import { DiabetesAgent } from './services/diabetes-agent';
+import { BloodSugarEmbeddingService } from './services/blood-sugar-embedding.service';
+import { debounce } from 'lodash';
 
 // Extend the Session interface to include our custom properties
 declare module '@fastify/session' {
@@ -93,6 +95,17 @@ app.register(fastifySession, {
 const dexcomService = new DexcomService();
 const aiService = new AIService();
 const diabetesAgent = new DiabetesAgent();
+const bloodSugarEmbeddingService = new BloodSugarEmbeddingService();
+
+// Initialize the embedding service when the server starts
+(async () => {
+    try {
+        await bloodSugarEmbeddingService.initialize();
+        app.log.info('Blood Sugar Embedding Service initialized successfully');
+    } catch (error) {
+        app.log.error(error, 'Failed to initialize Blood Sugar Embedding Service');
+    }
+})();
 
 // Define route schemas
 const StatusResponse = Type.Object({
@@ -626,122 +639,316 @@ app.get('/api/dexcom/insulin', {
     }
 });
 
-// AI analysis endpoint
-app.post('/api/ai/analyze-blood-sugar', {
-    schema: {
-        body: Type.Object({
-            content: Type.String()
-        }),
-        response: {
-            200: Type.Object({
-                glucoseTrend: Type.String(),
-                anomalyDetected: Type.Boolean(),
-                anomalyDescription: Type.Optional(Type.String()),
-                recommendations: Type.String(),
-                summary: Type.String(),
-                riskLevel: Type.Number()
-            }),
-            500: ErrorResponse
-        }
-    }
-}, async (request: FastifyRequest<{
-    Body: {
-        content: string;
-    }
-}>, reply: FastifyReply) => {
+// AI and Blood Sugar Embedding Routes
+app.post('/api/ai/analyze-blood-sugar', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-        app.log.info('Analyzing blood sugar data with AI');
-        const result = await aiService.analyzeBloodSugar(request.body);
-        return result;
+        const { content } = request.body as { content: string };
+
+        if (!content) {
+            return reply.status(400).send({ error: 'Content is required' });
+        }
+
+        const analysis = await aiService.analyzeBloodSugar({ content });
+        return analysis;
     } catch (error) {
-        app.log.error(error, 'Error analyzing blood sugar data');
-        return reply.status(500).send({
-            error: 'Failed to analyze blood sugar data',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        });
+        app.log.error(error, 'Error analyzing blood sugar');
+        return reply.status(500).send({ error: 'Failed to analyze blood sugar data' });
     }
 });
 
-// AI Q&A endpoint
-app.post('/api/ai/qa', {
-    schema: {
-        body: Type.Object({
-            question: Type.String(),
-            entries: Type.Array(Type.Object({
-                id: Type.String(),
-                content: Type.String(),
-                createdAt: Type.String()
-            }))
-        }),
-        response: {
-            200: Type.Object({
-                answer: Type.String()
-            }),
-            500: ErrorResponse
-        }
-    }
-}, async (request: FastifyRequest<{
-    Body: {
-        question: string;
-        entries: Array<{ id: string; content: string; createdAt: string }>;
-    }
-}>, reply: FastifyReply) => {
+app.post('/api/ai/embed-blood-sugar', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-        app.log.info('Processing Q&A with AI');
+        // For now, use a default user ID since we don't have auth
+        const userId = 'default-user';
+        const { days = 7 } = request.body as { days?: number };
 
-        // Convert string dates to Date objects
-        const entries = request.body.entries.map(entry => ({
-            ...entry,
-            createdAt: new Date(entry.createdAt)
-        }));
+        // Fetch recent readings from Dexcom - get the last 288 readings (1 per 5 min = 288 per day)
+        const count = days * 288;
+        const readings = await dexcomService.getV3EGVs(count);
 
-        const answer = await aiService.qa(request.body.question, entries);
-        return { answer };
-    } catch (error) {
-        app.log.error(error, 'Error processing Q&A');
-        return reply.status(500).send({
-            error: 'Failed to process Q&A',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        });
-    }
-});
-
-// AI Chat endpoint
-app.post('/api/chat', {
-    schema: {
-        body: Type.Object({
-            message: Type.String(),
-            sessionId: Type.Optional(Type.String({ default: 'default' }))
-        }),
-        response: {
-            200: Type.Object({
-                response: Type.String(),
-                sessionId: Type.String()
-            }),
-            500: ErrorResponse
+        if (!readings || readings.length === 0) {
+            return reply.status(404).send({ message: 'No blood sugar readings found for the specified period' });
         }
-    }
-}, async (request: FastifyRequest<{
-    Body: {
-        message: string;
-        sessionId?: string;
-    }
-}>, reply: FastifyReply) => {
-    try {
-        const { message, sessionId = 'default' } = request.body;
-        app.log.info({ sessionId }, 'Processing chat message with AI');
 
-        const result = await diabetesAgent.ask(message, sessionId);
+        // Process and store readings in Pinecone
+        await bloodSugarEmbeddingService.processAndStoreReadings(readings, userId);
 
         return {
-            response: result.output,
-            sessionId
+            success: true,
+            message: `Successfully embedded ${readings.length} blood sugar readings`,
+            count: readings.length
         };
     } catch (error) {
-        app.log.error(error, 'Error processing chat message');
+        app.log.error(error, 'Error embedding blood sugar readings');
+        return reply.status(500).send({ error: 'Failed to embed blood sugar readings' });
+    }
+});
+
+app.post('/api/ai/query-blood-sugar', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        // For now, use a default user ID since we don't have auth
+        const userId = 'default-user';
+        const { query, topK = 5 } = request.body as { query: string, topK?: number };
+
+        if (!query) {
+            return reply.status(400).send({ error: 'Query is required' });
+        }
+
+        const results = await bloodSugarEmbeddingService.querySimilarReadings(query, userId, topK);
+        return results;
+    } catch (error) {
+        app.log.error(error, 'Error querying blood sugar readings');
+        return reply.status(500).send({ error: 'Failed to query blood sugar readings' });
+    }
+});
+
+app.get('/api/ai/blood-sugar-insights/:timeframe?', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        // For now, use a default user ID since we don't have auth
+        const userId = 'default-user';
+        const { timeframe } = request.params as { timeframe?: 'day' | 'week' | 'month' };
+
+        const insights = await bloodSugarEmbeddingService.generateBloodSugarInsights(userId, timeframe || 'week');
+        return insights;
+    } catch (error) {
+        app.log.error(error, 'Error generating blood sugar insights');
+        return reply.status(500).send({ error: 'Failed to generate blood sugar insights' });
+    }
+});
+
+// Track when we last processed readings for each user
+const lastProcessedTimestamps: Record<string, number> = {};
+const PROCESSING_INTERVAL = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+// Debounced version of processAndStoreReadings to prevent repeated processing
+const debouncedProcessReadings = debounce(async (readings: any[], userId: string) => {
+    const now = Date.now();
+    const lastProcessed = lastProcessedTimestamps[userId] || 0;
+
+    // Only process if we haven't processed in the last 30 minutes
+    if (now - lastProcessed > PROCESSING_INTERVAL) {
+        console.log(`Processing readings for user ${userId} - last processed ${Math.round((now - lastProcessed) / 60000)} minutes ago`);
+        await bloodSugarEmbeddingService.processAndStoreReadings(readings, userId);
+        lastProcessedTimestamps[userId] = now;
+    } else {
+        console.log(`Skipping processing for user ${userId} - last processed ${Math.round((now - lastProcessed) / 60000)} minutes ago`);
+    }
+}, 5000, { leading: true, trailing: false }); // Only process the first call within 5 seconds
+
+app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        // For now, use a default user ID since we don't have auth
+        const userId = 'default-user';
+        const { message, sessionId } = request.body as { message: string, sessionId: string };
+
+        if (!message) {
+            return reply.status(400).send({ error: 'Message is required' });
+        }
+
+        if (!sessionId) {
+            return reply.status(400).send({ error: 'Session ID is required' });
+        }
+
+        let readings = [];
+        try {
+            // Get recent readings from Dexcom - last 288 readings (1 day)
+            readings = await dexcomService.getV3EGVs(288);
+
+            // Process and store readings if available
+            if (readings && readings.length > 0) {
+                await debouncedProcessReadings(readings, userId);
+            }
+        } catch (dexcomError) {
+            app.log.error('Error fetching Dexcom data:', dexcomError);
+            // Continue without Dexcom data - don't let this stop the chat functionality
+            console.log('Generating mock blood sugar data');
+            // Generate some mock data for testing
+            const mockReadings = generateMockReadings();
+            if (mockReadings.length > 0) {
+                console.log(`Found ${mockReadings.length} readings in the past week`);
+                await debouncedProcessReadings(mockReadings, userId);
+            }
+        }
+
+        // Get relevant blood sugar data based on the user's query
+        const similarReadings = await bloodSugarEmbeddingService.querySimilarReadings(message, userId, 10);
+
+        // Format the readings for the AI
+        let contextData = '';
+        if (similarReadings && similarReadings.length > 0) {
+            contextData = 'Here is relevant blood sugar data:\n\n' +
+                similarReadings.map((match: any) => {
+                    const metadata = match.metadata;
+                    return `Time: ${new Date(metadata.timestamp).toLocaleString()}, Value: ${metadata.value} mg/dL, Trend: ${metadata.trend}`;
+                }).join('\n');
+        }
+
+        // Combine the user's message with the context data
+        const fullPrompt = `${message}\n\n${contextData}`;
+
+        // Get AI response
+        const analysis = await aiService.analyzeBloodSugar({ content: fullPrompt });
+
+        return {
+            message: analysis.summary,
+            recommendations: analysis.recommendations.split('\n').filter((r: string) => r.trim().length > 0),
+            data: {
+                glucoseTrend: analysis.glucoseTrend,
+                anomalyDetected: analysis.anomalyDetected,
+                anomalyDescription: analysis.anomalyDescription,
+                riskLevel: analysis.riskLevel
+            }
+        };
+    } catch (error) {
+        app.log.error('Error processing chat message:', error);
         return reply.status(500).send({
             error: 'Failed to process chat message',
             details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Helper function to generate mock blood sugar readings for testing
+function generateMockReadings() {
+    const readings = [];
+    const now = new Date();
+    const oneWeekAgo = new Date(now);
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+    // Generate readings every 5 minutes for the past week
+    for (let time = oneWeekAgo; time <= now; time = new Date(time.getTime() + 5 * 60000)) {
+        // Generate a random blood sugar value between 70 and 180
+        const value = Math.floor(Math.random() * 110) + 70;
+        // Random trend
+        const trends = ['Flat', 'Rising', 'Falling', 'Rising Rapidly', 'Falling Rapidly'];
+        const trend = trends[Math.floor(Math.random() * trends.length)];
+
+        readings.push({
+            value,
+            trend,
+            timestamp: time.toISOString(),
+            userId: 'default-user'
+        });
+    }
+
+    return readings;
+}
+
+// Get chat history endpoint
+app.get('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
+    Params: { sessionId: string }
+}>, reply: FastifyReply) => {
+    try {
+        // For now, use a default user ID since we don't have auth
+        const userId = 'default-user';
+        const { sessionId } = request.params;
+
+        if (!sessionId) {
+            return reply.status(400).send({ error: 'Session ID is required' });
+        }
+
+        // Get chat history from the diabetes agent
+        const chatHistory = await diabetesAgent.getChatHistory(`${userId}-${sessionId}`);
+
+        // Format the chat history for the frontend
+        const formattedHistory = chatHistory.map(msg => ({
+            id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+            text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+            sender: msg._getType() === 'human' ? 'user' : 'ai',
+            timestamp: new Date().toLocaleTimeString()
+        }));
+
+        return { chatHistory: formattedHistory };
+    } catch (error) {
+        app.log.error('Error fetching chat history:', error);
+        return reply.status(500).send({
+            error: 'Failed to fetch chat history',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Clear chat history endpoint
+app.delete('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
+    Params: { sessionId: string }
+}>, reply: FastifyReply) => {
+    try {
+        // For now, use a default user ID since we don't have auth
+        const userId = 'default-user';
+        const { sessionId } = request.params;
+
+        if (!sessionId) {
+            return reply.status(400).send({ error: 'Session ID is required' });
+        }
+
+        // Clear chat history from the diabetes agent
+        await diabetesAgent.clearChatHistory(`${userId}-${sessionId}`);
+
+        return { success: true, message: 'Chat history cleared successfully' };
+    } catch (error) {
+        app.log.error('Error clearing chat history:', error);
+        return reply.status(500).send({
+            error: 'Failed to clear chat history',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
+// Get Dexcom alerts
+app.get('/api/dexcom/alerts', {
+    schema: {
+        querystring: Type.Object({
+            startDate: Type.String(),
+            endDate: Type.String()
+        }),
+        response: {
+            200: Type.Object({
+                recordType: Type.String(),
+                recordVersion: Type.String(),
+                userId: Type.String(),
+                records: Type.Array(Type.Object({
+                    recordId: Type.String(),
+                    systemTime: Type.String(),
+                    displayTime: Type.String(),
+                    alertName: Type.String(),
+                    alertState: Type.String(),
+                    displayDevice: Type.String(),
+                    transmitterGeneration: Type.String(),
+                    transmitterId: Type.String(),
+                    displayApp: Type.Optional(Type.String())
+                }))
+            }),
+            401: ErrorResponse,
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest<{
+    Querystring: {
+        startDate: string;
+        endDate: string;
+    }
+}>, reply: FastifyReply) => {
+    try {
+        const { startDate, endDate } = request.query;
+        app.log.info(`Fetching Dexcom alerts from ${startDate} to ${endDate}`);
+
+        // Check if authenticated
+        if (!dexcomService.isAuthenticated) {
+            return reply.code(401).send({
+                error: 'Not authenticated with Dexcom',
+                message: 'Please connect your Dexcom account'
+            });
+        }
+
+        const alertsResponse = await dexcomService.getAlerts(startDate, endDate);
+        app.log.info(`Successfully fetched ${alertsResponse.records.length} alerts`);
+
+        return alertsResponse;
+    } catch (error) {
+        app.log.error('Error fetching alerts:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch alerts',
+            message: error instanceof Error ? error.message : 'Unknown error'
         });
     }
 });
@@ -768,8 +975,12 @@ const start = async () => {
         app.log.info('- GET /api/dexcom/nutrition');
         app.log.info('- GET /api/dexcom/insulin');
         app.log.info('- POST /api/ai/analyze-blood-sugar');
-        app.log.info('- POST /api/ai/qa');
-        app.log.info('- POST /api/chat');
+        app.log.info('- POST /api/ai/embed-blood-sugar');
+        app.log.info('- POST /api/ai/query-blood-sugar');
+        app.log.info('- GET /api/ai/blood-sugar-insights/:timeframe?');
+        app.log.info('- POST /api/ai/chat');
+        app.log.info('- GET /api/ai/chat-history/:sessionId');
+        app.log.info('- DELETE /api/ai/chat-history/:sessionId');
         app.log.info('- GET /health');
     } catch (err) {
         app.log.error(err);

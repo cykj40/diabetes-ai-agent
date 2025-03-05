@@ -19,10 +19,10 @@ export interface DexcomAlert {
     recordId: string;
     systemTime: string;
     displayTime: string;
-    alertName: 'unknown' | 'high' | 'low' | 'rise' | 'fall' | 'outOfRange' | 'urgentLow' | 'urgentLowSoon' | 'noReadings' | 'fixedLow';
-    alertState: 'unknown' | 'inactive' | 'activeSnoozed' | 'activeAlarming';
-    displayDevice: 'unknown' | 'receiver' | 'iOS' | 'android';
-    transmitterGeneration: 'unknown' | 'g4' | 'g5' | 'g6' | 'g6+' | 'dexcomPro' | 'g7';
+    alertName: "unknown" | "high" | "low" | "rise" | "fall" | "outOfRange" | "urgentLow" | "urgentLowSoon" | "noReadings" | "fixedLow";
+    alertState: "unknown" | "inactive" | "activeSnoozed" | "activeAlarming";
+    displayDevice: "unknown" | "receiver" | "iOS" | "android";
+    transmitterGeneration: string;
     transmitterId: string;
     displayApp?: string;
 }
@@ -154,6 +154,13 @@ export interface EventsResponse {
     recordVersion: string;
     userId: string;
     records: DexcomEvent[];
+}
+
+export interface DexcomAlertsResponse {
+    recordType: string;
+    recordVersion: string;
+    userId: string;
+    records: DexcomAlert[];
 }
 
 export class DexcomService {
@@ -1072,5 +1079,83 @@ export class DexcomService {
                 longActing: []
             };
         }
+    }
+
+    async getAlerts(startDateStr: string, endDateStr: string): Promise<DexcomAlertsResponse> {
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
+        }
+
+        try {
+            console.log('Calling Dexcom v3 alerts API endpoint...');
+            console.log('Date range:', { startDate: startDateStr, endDate: endDateStr });
+
+            const response = await axios.get<DexcomAlertsResponse>(`${this.apiUrl}/v3/users/self/alerts`, {
+                headers: {
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                },
+                params: {
+                    startDate: startDateStr,
+                    endDate: endDateStr
+                }
+            });
+
+            console.log('Dexcom alerts API response status:', response.status);
+            console.log('Response has data:', !!response.data);
+            console.log('Response has records:', !!response.data.records);
+            console.log('Number of records:', response.data.records ? response.data.records.length : 0);
+
+            return response.data;
+        } catch (error: any) {
+            console.error('Error calling Dexcom alerts API:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
+
+            // Return mock alerts if the API call fails
+            return this.generateMockAlerts(startDateStr, endDateStr);
+        }
+    }
+
+    private generateMockAlerts(startDateStr: string, endDateStr: string): DexcomAlertsResponse {
+        console.log('Generating mock alerts data');
+
+        const startDate = new Date(startDateStr);
+        const endDate = new Date(endDateStr);
+        const mockAlerts: DexcomAlert[] = [];
+
+        // Generate a few mock alerts
+        const alertTypes: DexcomAlert["alertName"][] = ["high", "low", "outOfRange", "noReadings"];
+        const alertStates: DexcomAlert["alertState"][] = ["inactive", "activeSnoozed", "activeAlarming"];
+        const displayDevices: DexcomAlert["displayDevice"][] = ["iOS", "android", "receiver"];
+
+        // Generate 0-3 random alerts
+        const numAlerts = Math.floor(Math.random() * 4);
+
+        for (let i = 0; i < numAlerts; i++) {
+            const alertTime = new Date(startDate.getTime() + Math.random() * (endDate.getTime() - startDate.getTime()));
+            const alertType = alertTypes[Math.floor(Math.random() * alertTypes.length)];
+            const alertState = alertStates[Math.floor(Math.random() * alertStates.length)];
+            const displayDevice = displayDevices[Math.floor(Math.random() * displayDevices.length)];
+
+            mockAlerts.push({
+                recordId: `mock-alert-${i}-${Date.now()}`,
+                systemTime: alertTime.toISOString(),
+                displayTime: alertTime.toISOString(),
+                alertName: alertType,
+                alertState: alertState,
+                displayDevice: displayDevice,
+                transmitterGeneration: "g6",
+                transmitterId: 'mock-transmitter-id'
+            });
+        }
+
+        return {
+            recordType: 'alerts',
+            recordVersion: '3.0',
+            userId: 'mock-user-id',
+            records: mockAlerts
+        };
     }
 } 

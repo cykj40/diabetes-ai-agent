@@ -2,13 +2,18 @@
 
 import { UserButton } from "@clerk/nextjs";
 import GlucoseChart from "../../components/GlucoseChart";
-import AIChat from "../../components/AIChat";
 import DexcomStatus from "../../components/DexcomStatus";
 import WeeklyBloodSugarChart from "../../components/WeeklyBloodSugarChart";
 import TimeOfDayBloodSugarChart from "../../components/TimeOfDayBloodSugarChart";
-import { BsGraphUp, BsBell } from 'react-icons/bs';
+import CurrentGlucoseReading from "../../components/CurrentGlucoseReading";
+import DailyAverageReading from "../../components/DailyAverageReading";
+import TimeInRangeReading from "../../components/TimeInRangeReading";
+import WeeklyPatterns from "../../components/WeeklyPatterns";
+import DexcomAlerts from "../../components/DexcomAlerts";
+import { BsGraphUp, BsBell, BsChatSquareText } from 'react-icons/bs';
 import { FiSettings, FiActivity } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
+import Link from 'next/link';
 
 export default function Dashboard() {
     return (
@@ -24,6 +29,10 @@ export default function Dashboard() {
                         <DexcomStatus />
                     </div>
                     <div className="flex items-center space-x-6">
+                        <Link href="/ai-chat" className="flex items-center space-x-2 text-gray-600 hover:text-blue-600">
+                            <BsChatSquareText className="text-xl" />
+                            <span className="hidden md:inline">AI Chat</span>
+                        </Link>
                         <button className="text-gray-600 hover:text-blue-600">
                             <BsBell className="text-xl" />
                         </button>
@@ -40,28 +49,13 @@ export default function Dashboard() {
                 {/* Stats Overview */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-gray-800">Current Reading</h3>
-                            <BsGraphUp className="text-blue-600 text-xl" />
-                        </div>
-                        <div className="text-3xl font-bold text-blue-600">120 mg/dL</div>
-                        <div className="text-sm text-gray-500 mt-2">Trending stable</div>
+                        <CurrentGlucoseReading />
                     </div>
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-gray-800">Daily Average</h3>
-                            <FiActivity className="text-green-600 text-xl" />
-                        </div>
-                        <div className="text-3xl font-bold text-green-600">135 mg/dL</div>
-                        <div className="text-sm text-gray-500 mt-2">Last 24 hours</div>
+                        <DailyAverageReading />
                     </div>
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                        <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-semibold text-gray-800">Time in Range</h3>
-                            <RiPulseLine className="text-purple-600 text-xl" />
-                        </div>
-                        <div className="text-3xl font-bold text-purple-600">75%</div>
-                        <div className="text-sm text-gray-500 mt-2">Target: 70-180 mg/dL</div>
+                        <TimeInRangeReading />
                     </div>
                 </div>
 
@@ -100,11 +94,25 @@ export default function Dashboard() {
                             </div>
                         </div>
 
-                        {/* AI Chat Interface */}
+                        {/* Dexcom Alerts */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                            <DexcomAlerts />
+                        </div>
+
+                        {/* AI Chat Link */}
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                             <div className="p-6">
                                 <h2 className="text-xl font-semibold text-gray-800 mb-4">AI Assistant</h2>
-                                <AIChat />
+                                <p className="text-gray-600 mb-4">
+                                    Chat with your AI assistant to get personalized insights and answers about your diabetes management.
+                                </p>
+                                <Link
+                                    href="/ai-chat"
+                                    className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors w-full"
+                                >
+                                    <BsChatSquareText size={18} />
+                                    <span>Open AI Chat Assistant</span>
+                                </Link>
                             </div>
                         </div>
                     </div>
@@ -118,21 +126,7 @@ export default function Dashboard() {
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                        <h2 className="text-xl font-semibold text-gray-800 mb-4">Weekly Patterns</h2>
-                        <div className="space-y-4">
-                            <div className="flex items-center space-x-2">
-                                <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                                <span className="text-gray-600">Best control on Wednesdays</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                                <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                <span className="text-gray-600">Higher variability on weekends</span>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                                <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-                                <span className="text-gray-600">Consistent morning patterns</span>
-                            </div>
-                        </div>
+                        <WeeklyPatterns />
                     </div>
                 </div>
             </main>

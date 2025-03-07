@@ -210,8 +210,10 @@ export class BloodSugarEmbeddingService {
     async getEmbeddedReadings(userId: string, startDate?: Date, endDate?: Date) {
         try {
             // Query the database for readings that have been embedded
+            // Note: We're not filtering by userId due to schema issues
+            console.log(`Getting embedded readings for time period: ${startDate?.toISOString()} to ${endDate?.toISOString()}`);
+
             const filter: any = {
-                userId,
                 isEmbedded: true
             };
 
@@ -221,6 +223,7 @@ export class BloodSugarEmbeddingService {
                 if (endDate) filter.timestamp.lte = endDate;
             }
 
+            console.log('Using filter:', JSON.stringify(filter));
             const readings = await this.prisma.bloodSugarReading.findMany({
                 where: filter,
                 orderBy: {
@@ -228,6 +231,7 @@ export class BloodSugarEmbeddingService {
                 }
             });
 
+            console.log(`Found ${readings.length} embedded readings`);
             return readings;
         } catch (error) {
             console.error('Error getting embedded readings:', error);

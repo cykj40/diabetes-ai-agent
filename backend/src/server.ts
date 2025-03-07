@@ -74,7 +74,7 @@ const app: FastifyInstance = fastify({
 
 // Register plugins
 app.register(fastifyCors, {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: [process.env.FRONTEND_URL || 'http://localhost:3000', 'http://127.0.0.1:5500'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
@@ -953,6 +953,66 @@ app.get('/api/dexcom/alerts', {
     }
 });
 
+// Add this near the other Dexcom routes
+app.get('/auth/dexcom/test', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        app.log.info('Testing Dexcom authentication...');
+
+        // Check if authenticated
+        const isAuthenticated = dexcomService.isAuthenticated;
+        app.log.info({ isAuthenticated }, 'Current authentication status');
+
+        if (isAuthenticated) {
+            // Try to get some data to verify the token works
+            try {
+                const readings = await dexcomService.getLatestReadings(1);
+                app.log.info({ readings }, 'Successfully retrieved readings');
+
+                return {
+                    status: 'authenticated',
+                    tokenWorks: true,
+                    readings
+                };
+            } catch (dataError) {
+                app.log.error(dataError, 'Error retrieving data with token');
+
+                // Try to refresh the token
+                try {
+                    app.log.info('Attempting to refresh token...');
+                    const refreshed = await dexcomService.refreshToken();
+                    app.log.info({ refreshed }, 'Token refresh result');
+
+                    return {
+                        status: 'authenticated',
+                        tokenWorks: false,
+                        refreshed,
+                        error: dataError instanceof Error ? dataError.message : 'Unknown error'
+                    };
+                } catch (refreshError) {
+                    app.log.error(refreshError, 'Error refreshing token');
+                    return {
+                        status: 'authenticated',
+                        tokenWorks: false,
+                        refreshed: false,
+                        error: refreshError instanceof Error ? refreshError.message : 'Unknown error'
+                    };
+                }
+            }
+        } else {
+            return {
+                status: 'not_authenticated',
+                message: 'Please authenticate with Dexcom first'
+            };
+        }
+    } catch (error) {
+        app.log.error(error, 'Error in Dexcom test endpoint');
+        return reply.status(500).send({
+            error: 'Failed to test Dexcom authentication',
+            details: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
 // Start server
 const start = async () => {
     try {
@@ -982,6 +1042,7 @@ const start = async () => {
         app.log.info('- GET /api/ai/chat-history/:sessionId');
         app.log.info('- DELETE /api/ai/chat-history/:sessionId');
         app.log.info('- GET /health');
+        app.log.info('- GET /auth/dexcom/test');
     } catch (err) {
         app.log.error(err);
         process.exit(1);

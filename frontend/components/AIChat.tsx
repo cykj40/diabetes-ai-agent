@@ -52,7 +52,7 @@ export default function AIChat() {
 
     const fetchChatHistory = async () => {
         try {
-            const response = await fetch(`/api/chat/history/${sessionId}`);
+            const response = await fetch(`/api/ai/chat-history/${sessionId}`);
             if (response.ok) {
                 const data = await response.json();
                 if (data.chatHistory && data.chatHistory.length > 0) {
@@ -67,7 +67,7 @@ export default function AIChat() {
     const clearChatHistory = async () => {
         try {
             setIsLoading(true);
-            const response = await fetch(`/api/chat/history/${sessionId}`, {
+            const response = await fetch(`/api/ai/chat-history/${sessionId}`, {
                 method: 'DELETE',
             });
 
@@ -105,7 +105,7 @@ export default function AIChat() {
             console.log('Sending message to API:', input);
 
             // Use the chat endpoint
-            const response = await fetch('/api/chat', {
+            const response = await fetch('/api/ai/chat', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -153,7 +153,7 @@ export default function AIChat() {
         setIsEmbedding(true);
         try {
             // Call the embed endpoint
-            const response = await fetch('/api/chat/embed-blood-sugar', {
+            const response = await fetch('/api/ai/embed-blood-sugar', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

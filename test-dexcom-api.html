@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dexcom API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        button {
+            padding: 10px 15px;
+            margin: 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background-color: #45a049;
+        }
+
+        pre {
+            background-color: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Dexcom API Test</h1>
+
+    <div>
+        <h2>Authentication</h2>
+        <button onclick="testEndpoint('/auth/dexcom/test')">Test Authentication</button>
+        <button onclick="testEndpoint('/auth/dexcom/status')">Check Auth Status</button>
+    </div>
+
+    <div>
+        <h2>Blood Sugar Data</h2>
+        <button onclick="testEndpoint('/api/dexcom/readings?count=10')">Get Latest 10 Readings</button>
+        <button onclick="testEndpoint('/api/dexcom/weekly-data')">Get Weekly Data</button>
+        <button onclick="testEndpoint('/api/dexcom/device-data')">Get Device Data</button>
+    </div>
+
+    <div>
+        <h2>AI Features</h2>
+        <button onclick="testEndpoint('/api/ai/blood-sugar-insights/week')">Get Weekly Insights</button>
+        <button onclick="testChatEndpoint()">Test Chat</button>
+    </div>
+
+    <h2>Response:</h2>
+    <pre id="response">Results will appear here...</pre>
+
+    <script>
+        async function testEndpoint(endpoint) {
+            const resultElement = document.getElementById('response');
+            resultElement.textContent = 'Loading...';
+
+            try {
+                const response = await fetch(`http://localhost:3001${endpoint}`, {
+                    method: 'GET',
+                    credentials: 'include',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+
+                const data = await response.json();
+                resultElement.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                resultElement.textContent = `Error: ${error.message}`;
+            }
+        }
+
+        async function testChatEndpoint() {
+            const resultElement = document.getElementById('response');
+            resultElement.textContent = 'Loading...';
+
+            try {
+                const response = await fetch('http://localhost:3001/api/ai/chat', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        message: 'What is my current blood sugar?',
+                        sessionId: 'test-session'
+                    })
+                });
+
+                const data = await response.json();
+                resultElement.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                resultElement.textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+
+</html>

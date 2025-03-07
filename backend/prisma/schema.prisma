@@ -20,7 +20,7 @@ model ChatMessage {
 model BloodSugarReading {
     id         String   @id @default(uuid())
     sessionId  String
-    userId     String   @default("default-user")
+    userId     String // Required field
     value      Float
     trend      String
     timestamp  DateTime

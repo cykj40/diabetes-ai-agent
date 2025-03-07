@@ -74,10 +74,17 @@ const app: FastifyInstance = fastify({
 
 // Register plugins
 app.register(fastifyCors, {
-    origin: [process.env.FRONTEND_URL || 'http://localhost:3000', 'http://127.0.0.1:5500'],
+    origin: [
+        process.env.FRONTEND_URL || 'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:3000',
+        'http://127.0.0.1:5500',
+        'http://localhost:3001'
+    ],
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range']
 });
 
 app.register(fastifyCookie);
@@ -236,7 +243,7 @@ app.get('/auth/dexcom/status', {
     try {
         app.log.info('Checking Dexcom auth status...');
         const status = {
-            isAuthenticated: dexcomService.isAuthenticated,
+            isAuthenticated: isDexcomAuthenticated(),
             timestamp: new Date().toISOString()
         };
         app.log.info(status, 'Auth status');
@@ -245,7 +252,7 @@ app.get('/auth/dexcom/status', {
         app.log.error(error, 'Error checking auth status');
         return reply.status(500).send({
             error: 'Failed to check authentication status',
-            details: error instanceof Error ? error.message : 'Unknown error'
+            message: error instanceof Error ? error.message : 'Unknown error'
         });
     }
 });
@@ -341,7 +348,7 @@ app.get('/api/dexcom/weekly-data', {
         app.log.info('Fetching weekly blood sugar data');
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
@@ -386,7 +393,7 @@ app.get('/api/dexcom/device-data', {
         app.log.info('Fetching Dexcom device data with readings');
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
@@ -466,7 +473,7 @@ app.get('/api/dexcom/data-range', {
         app.log.info('Fetching Dexcom data range');
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
@@ -528,7 +535,7 @@ app.get('/api/dexcom/events', {
         app.log.info(`Fetching Dexcom events for the last ${days} days`);
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
@@ -573,7 +580,7 @@ app.get('/api/dexcom/nutrition', {
         app.log.info(`Fetching nutrition data for the last ${days} days`);
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
@@ -619,7 +626,7 @@ app.get('/api/dexcom/insulin', {
         app.log.info(`Fetching insulin data for the last ${days} days`);
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
@@ -737,8 +744,17 @@ const debouncedProcessReadings = debounce(async (readings: any[], userId: string
 
 app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-        // For now, use a default user ID since we don't have auth
-        const userId = 'default-user';
+        // Extract user ID from Authorization header
+        const authHeader = request.headers.authorization;
+        let userId = 'default-user';
+
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            console.log('Authenticated user:', userId);
+        } else {
+            console.log('No valid authorization header, using default user');
+        }
+
         const { message, sessionId } = request.body as { message: string, sessionId: string };
 
         if (!message) {
@@ -749,29 +765,49 @@ app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) =>
             return reply.status(400).send({ error: 'Session ID is required' });
         }
 
+        // Create a session-specific ID that includes the user ID
+        const fullSessionId = `${userId}-${sessionId}`;
+        console.log(`Processing chat message for session ${fullSessionId}`);
+
         let readings = [];
         try {
             // Get recent readings from Dexcom - last 288 readings (1 day)
             readings = await dexcomService.getV3EGVs(288);
+            console.log(`Retrieved ${readings.length} readings from Dexcom`);
 
             // Process and store readings if available
             if (readings && readings.length > 0) {
                 await debouncedProcessReadings(readings, userId);
             }
-        } catch (dexcomError) {
+        } catch (dexcomError: any) {
             app.log.error('Error fetching Dexcom data:', dexcomError);
+
+            // Log detailed error information if available
+            if (dexcomError.response) {
+                console.error('Dexcom API response status:', dexcomError.response.status);
+                console.error('Dexcom API response data:', dexcomError.response.data);
+            }
+
             // Continue without Dexcom data - don't let this stop the chat functionality
             console.log('Generating mock blood sugar data');
+
             // Generate some mock data for testing
             const mockReadings = generateMockReadings();
             if (mockReadings.length > 0) {
-                console.log(`Found ${mockReadings.length} readings in the past week`);
-                await debouncedProcessReadings(mockReadings, userId);
+                console.log(`Generated ${mockReadings.length} mock readings`);
+                try {
+                    await debouncedProcessReadings(mockReadings, userId);
+                } catch (processingError) {
+                    console.error('Error processing mock readings:', processingError);
+                    // Continue even if processing fails
+                }
             }
         }
 
         // Get relevant blood sugar data based on the user's query
+        console.log('Querying similar readings for:', message);
         const similarReadings = await bloodSugarEmbeddingService.querySimilarReadings(message, userId, 10);
+        console.log(`Found ${similarReadings?.length || 0} similar readings`);
 
         // Format the readings for the AI
         let contextData = '';
@@ -785,11 +821,13 @@ app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) =>
 
         // Combine the user's message with the context data
         const fullPrompt = `${message}\n\n${contextData}`;
+        console.log('Sending prompt to AI service');
 
         // Get AI response
         const analysis = await aiService.analyzeBloodSugar({ content: fullPrompt });
+        console.log('Received AI response');
 
-        return {
+        const response = {
             message: analysis.summary,
             recommendations: analysis.recommendations.split('\n').filter((r: string) => r.trim().length > 0),
             data: {
@@ -799,6 +837,9 @@ app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) =>
                 riskLevel: analysis.riskLevel
             }
         };
+
+        console.log('Sending response to client');
+        return response;
     } catch (error) {
         app.log.error('Error processing chat message:', error);
         return reply.status(500).send({
@@ -808,6 +849,11 @@ app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) =>
     }
 });
 
+// Helper function to format dates for Dexcom API
+function formatDexcomDate(date: Date): string {
+    return date.toISOString().split('.')[0]; // Removes milliseconds and trailing Z
+}
+
 // Helper function to generate mock blood sugar readings for testing
 function generateMockReadings() {
     const readings = [];
@@ -815,8 +861,10 @@ function generateMockReadings() {
     const oneWeekAgo = new Date(now);
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
+    console.log('Generating mock readings from', formatDexcomDate(oneWeekAgo), 'to', formatDexcomDate(now));
+
     // Generate readings every 5 minutes for the past week
-    for (let time = oneWeekAgo; time <= now; time = new Date(time.getTime() + 5 * 60000)) {
+    for (let time = new Date(oneWeekAgo); time <= now; time = new Date(time.getTime() + 5 * 60000)) {
         // Generate a random blood sugar value between 70 and 180
         const value = Math.floor(Math.random() * 110) + 70;
         // Random trend
@@ -826,29 +874,44 @@ function generateMockReadings() {
         readings.push({
             value,
             trend,
-            timestamp: time.toISOString(),
+            timestamp: formatDexcomDate(time),
             userId: 'default-user'
         });
     }
 
+    console.log(`Generated ${readings.length} mock readings`);
     return readings;
 }
 
 // Get chat history endpoint
 app.get('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
-    Params: { sessionId: string }
+    Params: {
+        sessionId: string;
+    }
 }>, reply: FastifyReply) => {
     try {
-        // For now, use a default user ID since we don't have auth
-        const userId = 'default-user';
         const { sessionId } = request.params;
 
-        if (!sessionId) {
-            return reply.status(400).send({ error: 'Session ID is required' });
+        // Extract user ID from Authorization header
+        const authHeader = request.headers.authorization;
+        let userId = 'default-user';
+
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            console.log('Authenticated user:', userId);
+        } else {
+            console.log('No valid authorization header, using default user');
         }
 
-        // Get chat history from the diabetes agent
-        const chatHistory = await diabetesAgent.getChatHistory(`${userId}-${sessionId}`);
+        console.log(`Fetching chat history for session ${sessionId} and user ${userId}`);
+
+        // Create a session-specific ID that includes the user ID
+        const fullSessionId = `${userId}-${sessionId}`;
+
+        // Get chat history from the agent
+        const chatHistory = await diabetesAgent.getChatHistory(fullSessionId);
+
+        console.log(`Retrieved ${chatHistory.length} messages from history`);
 
         // Format the chat history for the frontend
         const formattedHistory = chatHistory.map(msg => ({
@@ -858,7 +921,9 @@ app.get('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
             timestamp: new Date().toLocaleTimeString()
         }));
 
-        return { chatHistory: formattedHistory };
+        return {
+            messages: formattedHistory
+        };
     } catch (error) {
         app.log.error('Error fetching chat history:', error);
         return reply.status(500).send({
@@ -870,21 +935,38 @@ app.get('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
 
 // Clear chat history endpoint
 app.delete('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
-    Params: { sessionId: string }
+    Params: {
+        sessionId: string;
+    }
 }>, reply: FastifyReply) => {
     try {
-        // For now, use a default user ID since we don't have auth
-        const userId = 'default-user';
         const { sessionId } = request.params;
 
-        if (!sessionId) {
-            return reply.status(400).send({ error: 'Session ID is required' });
+        // Extract user ID from Authorization header
+        const authHeader = request.headers.authorization;
+        let userId = 'default-user';
+
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            console.log('Authenticated user:', userId);
+        } else {
+            console.log('No valid authorization header, using default user');
         }
 
-        // Clear chat history from the diabetes agent
-        await diabetesAgent.clearChatHistory(`${userId}-${sessionId}`);
+        console.log(`Clearing chat history for session ${sessionId} and user ${userId}`);
 
-        return { success: true, message: 'Chat history cleared successfully' };
+        // Create a session-specific ID that includes the user ID
+        const fullSessionId = `${userId}-${sessionId}`;
+
+        // Clear chat history
+        await diabetesAgent.clearChatHistory(fullSessionId);
+
+        console.log('Chat history cleared successfully');
+
+        return {
+            success: true,
+            message: 'Chat history cleared successfully'
+        };
     } catch (error) {
         app.log.error('Error clearing chat history:', error);
         return reply.status(500).send({
@@ -898,52 +980,35 @@ app.delete('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
 app.get('/api/dexcom/alerts', {
     schema: {
         querystring: Type.Object({
-            startDate: Type.String(),
-            endDate: Type.String()
-        }),
-        response: {
-            200: Type.Object({
-                recordType: Type.String(),
-                recordVersion: Type.String(),
-                userId: Type.String(),
-                records: Type.Array(Type.Object({
-                    recordId: Type.String(),
-                    systemTime: Type.String(),
-                    displayTime: Type.String(),
-                    alertName: Type.String(),
-                    alertState: Type.String(),
-                    displayDevice: Type.String(),
-                    transmitterGeneration: Type.String(),
-                    transmitterId: Type.String(),
-                    displayApp: Type.Optional(Type.String())
-                }))
-            }),
-            401: ErrorResponse,
-            500: ErrorResponse
-        }
+            startDate: Type.Optional(Type.String()),
+            endDate: Type.Optional(Type.String())
+        })
     }
 }, async (request: FastifyRequest<{
     Querystring: {
-        startDate: string;
-        endDate: string;
+        startDate?: string;
+        endDate?: string;
     }
 }>, reply: FastifyReply) => {
     try {
-        const { startDate, endDate } = request.query;
-        app.log.info(`Fetching Dexcom alerts from ${startDate} to ${endDate}`);
+        app.log.info('Fetching Dexcom alerts');
 
         // Check if authenticated
-        if (!dexcomService.isAuthenticated) {
+        if (!isDexcomAuthenticated()) {
             return reply.code(401).send({
                 error: 'Not authenticated with Dexcom',
                 message: 'Please connect your Dexcom account'
             });
         }
 
-        const alertsResponse = await dexcomService.getAlerts(startDate, endDate);
-        app.log.info(`Successfully fetched ${alertsResponse.records.length} alerts`);
+        // Convert string dates to Date objects
+        const endDate = request.query.endDate ? new Date(request.query.endDate) : new Date();
+        const startDate = request.query.startDate ? new Date(request.query.startDate) : new Date(endDate.getTime() - (24 * 60 * 60 * 1000)); // Default to 24 hours ago
 
-        return alertsResponse;
+        const alerts = await dexcomService.getAlerts(startDate, endDate);
+        app.log.info(`Successfully fetched ${alerts.length} alerts`);
+
+        return { records: alerts };
     } catch (error) {
         app.log.error('Error fetching alerts:', error);
         return reply.code(500).send({
@@ -959,7 +1024,7 @@ app.get('/auth/dexcom/test', async (request: FastifyRequest, reply: FastifyReply
         app.log.info('Testing Dexcom authentication...');
 
         // Check if authenticated
-        const isAuthenticated = dexcomService.isAuthenticated;
+        const isAuthenticated = isDexcomAuthenticated();
         app.log.info({ isAuthenticated }, 'Current authentication status');
 
         if (isAuthenticated) {
@@ -1012,6 +1077,18 @@ app.get('/auth/dexcom/test', async (request: FastifyRequest, reply: FastifyReply
         });
     }
 });
+
+// Add this helper function after the formatDexcomDate function
+function isDexcomAuthenticated(): boolean {
+    // Use a try-catch to safely access the isAuthenticated property
+    try {
+        // @ts-ignore - Accessing private property for compatibility
+        return dexcomService.isAuthenticated;
+    } catch (error) {
+        console.error('Error checking Dexcom authentication status:', error);
+        return false;
+    }
+}
 
 // Start server
 const start = async () => {

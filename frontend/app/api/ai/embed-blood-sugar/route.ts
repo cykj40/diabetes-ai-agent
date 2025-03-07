@@ -8,8 +8,8 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const body = await request.json();
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+        console.log('Using backend URL:', backendUrl);
 
         const response = await fetch(`${backendUrl}/api/ai/embed-blood-sugar`, {
             method: 'POST',
@@ -17,16 +17,31 @@ export async function POST(request: NextRequest) {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${userId}`
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify({}), // No need to pass any data, the backend will fetch from Dexcom
         });
 
+        console.log('Backend response status:', response.status);
+
         if (!response.ok) {
-            const errorData = await response.json();
-            console.error('Backend error:', errorData);
-            return NextResponse.json(errorData, { status: response.status });
+            const errorText = await response.text();
+            console.error('Backend error response:', errorText);
+
+            let errorData = {};
+            try {
+                errorData = JSON.parse(errorText);
+            } catch (e) {
+                console.error('Failed to parse error response as JSON');
+            }
+
+            return NextResponse.json(
+                errorData || { error: `Server responded with status: ${response.status}` },
+                { status: response.status }
+            );
         }
 
         const data = await response.json();
+        console.log('Backend response data:', data);
+
         return NextResponse.json(data);
     } catch (error) {
         console.error('API route error:', error);

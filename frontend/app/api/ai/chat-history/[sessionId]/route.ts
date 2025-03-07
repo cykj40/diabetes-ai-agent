@@ -11,24 +11,44 @@ export async function GET(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { sessionId } = params;
+        const sessionId = params.sessionId;
+        if (!sessionId) {
+            return NextResponse.json({ error: 'Session ID is required' }, { status: 400 });
+        }
+
+        console.log('Fetching chat history for session:', sessionId);
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+        console.log('Using backend URL:', backendUrl);
 
         const response = await fetch(`${backendUrl}/api/ai/chat-history/${sessionId}`, {
-            method: 'GET',
             headers: {
-                'Content-Type': 'application/json',
+                'Accept': 'application/json',
                 'Authorization': `Bearer ${userId}`
-            }
+            },
         });
 
+        console.log('Backend response status:', response.status);
+
         if (!response.ok) {
-            const errorData = await response.json();
-            console.error('Backend error:', errorData);
-            return NextResponse.json(errorData, { status: response.status });
+            const errorText = await response.text();
+            console.error('Backend error response:', errorText);
+
+            let errorData = {};
+            try {
+                errorData = JSON.parse(errorText);
+            } catch (e) {
+                console.error('Failed to parse error response as JSON');
+            }
+
+            return NextResponse.json(
+                errorData || { error: `Server responded with status: ${response.status}` },
+                { status: response.status }
+            );
         }
 
         const data = await response.json();
+        console.log('Chat history retrieved successfully');
+
         return NextResponse.json(data);
     } catch (error) {
         console.error('API route error:', error);
@@ -52,29 +72,51 @@ export async function DELETE(
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const { sessionId } = params;
+        const sessionId = params.sessionId;
+        if (!sessionId) {
+            return NextResponse.json({ error: 'Session ID is required' }, { status: 400 });
+        }
+
+        console.log('Deleting chat history for session:', sessionId);
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+        console.log('Using backend URL:', backendUrl);
 
         const response = await fetch(`${backendUrl}/api/ai/chat-history/${sessionId}`, {
             method: 'DELETE',
             headers: {
-                'Content-Type': 'application/json',
+                'Accept': 'application/json',
                 'Authorization': `Bearer ${userId}`
-            }
+            },
         });
 
+        console.log('Backend response status:', response.status);
+
         if (!response.ok) {
-            const errorData = await response.json();
-            console.error('Backend error:', errorData);
-            return NextResponse.json(errorData, { status: response.status });
+            const errorText = await response.text();
+            console.error('Backend error response:', errorText);
+
+            let errorData = {};
+            try {
+                errorData = JSON.parse(errorText);
+            } catch (e) {
+                console.error('Failed to parse error response as JSON');
+            }
+
+            return NextResponse.json(
+                errorData || { error: `Server responded with status: ${response.status}` },
+                { status: response.status }
+            );
         }
 
-        return NextResponse.json({ success: true });
+        const data = await response.json();
+        console.log('Chat history deleted successfully');
+
+        return NextResponse.json(data);
     } catch (error) {
         console.error('API route error:', error);
         return NextResponse.json(
             {
-                error: 'Failed to clear chat history',
+                error: 'Failed to delete chat history',
                 details: error instanceof Error ? error.message : 'Unknown error'
             },
             { status: 500 }

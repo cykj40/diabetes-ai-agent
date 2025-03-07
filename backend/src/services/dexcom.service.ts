@@ -174,10 +174,11 @@ export class DexcomService {
     private userId: string = 'default-user'; // We'll use a default user ID for now
 
     constructor() {
-        this.apiUrl = process.env.DEXCOM_API_URL || 'https://sandbox-api.dexcom.com';
+        this.apiUrl = process.env.DEXCOM_API_URL || 'https://api.dexcom.com';
         this.clientId = process.env.DEXCOM_CLIENT_ID || '';
         this.clientSecret = process.env.DEXCOM_CLIENT_SECRET || '';
-        this.redirectUri = process.env.DEXCOM_REDIRECT_URI || 'http://localhost:3001/auth/dexcom/callback';
+        this.redirectUri = process.env.DEXCOM_REDIRECT_URI || '';
+        this.tokenSet = null;
         this.prisma = new PrismaClient();
         this.initializeClient();
         this.loadTokenFromDatabase();
@@ -439,48 +440,8 @@ export class DexcomService {
         return this.isAuthenticated;
     }
 
-    async getLatestReadings(count: number = 48): Promise<DexcomReading[]> {
-        try {
-            console.log('Starting getLatestReadings...');
-            console.log('Is authenticated before token check:', this.isAuthenticated);
-            console.log('Has tokenSet:', !!this.tokenSet);
-            if (this.tokenSet) {
-                console.log('Token expires at:', this.tokenSet.expires_at);
-                console.log('Token expired:', this.tokenSet.expired());
-                console.log('Has refresh token:', !!this.tokenSet.refresh_token);
-            }
-
-            const hasValidToken = await this.ensureValidToken();
-            console.log('Token status after ensureValidToken:', hasValidToken ? 'Valid' : 'Invalid/Missing');
-
-            if (hasValidToken && this.tokenSet) {
-                console.log('Fetching real Dexcom data...');
-
-                // Try to use the v3 API first
-                try {
-                    const v3Readings = await this.getV3EGVs(count);
-                    console.log(`Successfully fetched ${v3Readings.length} readings from v3 API`);
-                    return v3Readings;
-                } catch (v3Error) {
-                    console.error('Error using v3 API, falling back to v2:', v3Error);
-
-                    // Fall back to v2 API if v3 fails
-                    try {
-                        return await this.getV2Readings(count);
-                    } catch (v2Error) {
-                        console.error('Error using v2 API, falling back to mock data:', v2Error);
-                        return this.generateMockReadings(count);
-                    }
-                }
-            } else {
-                console.log('No valid token available, falling back to mock data');
-                return this.generateMockReadings(count);
-            }
-        } catch (error) {
-            console.error('Error in getLatestReadings:', error);
-            console.log('Falling back to mock data due to error');
-            return this.generateMockReadings(count);
-        }
+    private formatDexcomDate(date: Date): string {
+        return date.toISOString().split('.')[0]; // Removes milliseconds and trailing Z
     }
 
     private async getV2Readings(count: number): Promise<DexcomReading[]> {
@@ -488,9 +449,13 @@ export class DexcomService {
         const endDate = new Date();
         const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
 
+        // Format dates in the required format for Dexcom API
+        const formattedStartDate = this.formatDexcomDate(startDate);
+        const formattedEndDate = this.formatDexcomDate(endDate);
+
         console.log('Using date range for v2 API:', {
-            startDate: startDate.toISOString(),
-            endDate: endDate.toISOString()
+            startDate: formattedStartDate,
+            endDate: formattedEndDate
         });
 
         try {
@@ -499,8 +464,8 @@ export class DexcomService {
                     'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 },
                 params: {
-                    startDate: startDate.toISOString(),
-                    endDate: endDate.toISOString()
+                    startDate: formattedStartDate,
+                    endDate: formattedEndDate
                 }
             });
 
@@ -533,9 +498,13 @@ export class DexcomService {
         const endDate = new Date();
         const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
 
+        // Format dates in the required format for Dexcom API
+        const formattedStartDate = this.formatDexcomDate(startDate);
+        const formattedEndDate = this.formatDexcomDate(endDate);
+
         console.log('Using date range for v3 API:', {
-            startDate: startDate.toISOString(),
-            endDate: endDate.toISOString()
+            startDate: formattedStartDate,
+            endDate: formattedEndDate
         });
 
         try {
@@ -545,8 +514,8 @@ export class DexcomService {
                     'Authorization': `Bearer ${this.tokenSet!.access_token}`
                 },
                 params: {
-                    startDate: startDate.toISOString(),
-                    endDate: endDate.toISOString()
+                    startDate: formattedStartDate,
+                    endDate: formattedEndDate
                 }
             });
 
@@ -1081,7 +1050,7 @@ export class DexcomService {
         }
     }
 
-    async getAlerts(startDateStr: string, endDateStr: string): Promise<DexcomAlertsResponse> {
+    async getAlertsV3(startDateStr: string, endDateStr: string): Promise<DexcomAlertsResponse> {
         if (!await this.ensureValidToken()) {
             throw new Error('Not authenticated with Dexcom');
         }
@@ -1157,5 +1126,42 @@ export class DexcomService {
             userId: 'mock-user-id',
             records: mockAlerts
         };
+    }
+
+    async getLatestReadings(count: number = 48): Promise<DexcomReading[]> {
+        try {
+            console.log('Starting getLatestReadings...');
+
+            const hasValidToken = await this.ensureValidToken();
+            console.log('Token status after ensureValidToken:', hasValidToken ? 'Valid' : 'Invalid/Missing');
+
+            if (hasValidToken && this.tokenSet) {
+                console.log('Fetching real Dexcom data...');
+
+                // Try to use the v3 API first
+                try {
+                    const v3Readings = await this.getV3EGVs(count);
+                    console.log(`Successfully fetched ${v3Readings.length} readings from v3 API`);
+                    return v3Readings;
+                } catch (v3Error) {
+                    console.error('Error using v3 API, falling back to v2:', v3Error);
+
+                    // Fall back to v2 API if v3 fails
+                    try {
+                        return await this.getV2Readings(count);
+                    } catch (v2Error) {
+                        console.error('Error using v2 API, falling back to mock data:', v2Error);
+                        return this.generateMockReadings(count);
+                    }
+                }
+            } else {
+                console.log('No valid token available, falling back to mock data');
+                return this.generateMockReadings(count);
+            }
+        } catch (error) {
+            console.error('Error in getLatestReadings:', error);
+            console.log('Falling back to mock data due to error');
+            return this.generateMockReadings(count);
+        }
     }
 } 

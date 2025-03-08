@@ -14,6 +14,7 @@ import { BsGraphUp, BsBell, BsChatSquareText } from 'react-icons/bs';
 import { FiSettings, FiActivity } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
 import Link from 'next/link';
+import ClientOnly from "../../components/ClientOnly";
 
 export default function Dashboard() {
     return (
@@ -26,7 +27,9 @@ export default function Dashboard() {
                         <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 text-transparent bg-clip-text">
                             DiabetesAI Assistant
                         </h1>
-                        <DexcomStatus />
+                        <ClientOnly>
+                            <DexcomStatus />
+                        </ClientOnly>
                     </div>
                     <div className="flex items-center space-x-6">
                         <Link href="/ai-chat" className="flex items-center space-x-2 text-gray-600 hover:text-blue-600">
@@ -39,7 +42,9 @@ export default function Dashboard() {
                         <button className="text-gray-600 hover:text-blue-600">
                             <FiSettings className="text-xl" />
                         </button>
-                        <UserButton afterSignOutUrl="/" />
+                        <ClientOnly fallback={<div className="w-8 h-8 rounded-full bg-gray-200"></div>}>
+                            <UserButton afterSignOutUrl="/" />
+                        </ClientOnly>
                     </div>
                 </div>
             </nav>
@@ -65,12 +70,16 @@ export default function Dashboard() {
                     <div className="lg:col-span-2">
                         <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                             <h2 className="text-xl font-semibold text-gray-800 mb-4">Glucose Trends</h2>
-                            <GlucoseChart />
+                            <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
+                                <GlucoseChart />
+                            </ClientOnly>
                         </div>
 
                         {/* Weekly Blood Sugar Chart */}
                         <div className="mt-6">
-                            <WeeklyBloodSugarChart />
+                            <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
+                                <WeeklyBloodSugarChart />
+                            </ClientOnly>
                         </div>
                     </div>
 
@@ -96,7 +105,9 @@ export default function Dashboard() {
 
                         {/* Dexcom Alerts */}
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                            <DexcomAlerts />
+                            <ClientOnly fallback={<div className="h-48 bg-gray-100 animate-pulse p-6"></div>}>
+                                <DexcomAlerts />
+                            </ClientOnly>
                         </div>
 
                         {/* AI Chat Link */}
@@ -122,11 +133,15 @@ export default function Dashboard() {
                 <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                         <h2 className="text-xl font-semibold text-gray-800 mb-4">Time of Day Analysis</h2>
-                        <TimeOfDayBloodSugarChart />
+                        <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
+                            <TimeOfDayBloodSugarChart />
+                        </ClientOnly>
                     </div>
 
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
-                        <WeeklyPatterns />
+                        <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
+                            <WeeklyPatterns />
+                        </ClientOnly>
                     </div>
                 </div>
             </main>

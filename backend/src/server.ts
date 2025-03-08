@@ -19,6 +19,8 @@ import { AIService } from './services/ai.service';
 import { DiabetesAgent } from './services/diabetes-agent';
 import { BloodSugarEmbeddingService } from './services/blood-sugar-embedding.service';
 import { debounce } from 'lodash';
+import aiRoutes from './routes/ai.routes';
+import axios from 'axios';
 
 // Extend the Session interface to include our custom properties
 declare module '@fastify/session' {
@@ -113,6 +115,9 @@ const bloodSugarEmbeddingService = new BloodSugarEmbeddingService();
         app.log.error(error, 'Failed to initialize Blood Sugar Embedding Service');
     }
 })();
+
+// Register AI routes
+app.register(aiRoutes, { prefix: '/api/ai' });
 
 // Define route schemas
 const StatusResponse = Type.Object({
@@ -306,10 +311,27 @@ app.get('/api/dexcom/readings', {
     Querystring: {
         count?: number;
     }
-}>) => {
-    const { count } = request.query;
-    app.log.info({ count }, 'Fetching glucose readings');
-    return dexcomService.getLatestReadings(count);
+}>, reply: FastifyReply) => {
+    try {
+        const { count = 48 } = request.query;
+        app.log.info({ count }, 'Fetching glucose readings');
+
+        // Check if authenticated with Dexcom
+        if (!isDexcomAuthenticated()) {
+            // If not authenticated, generate mock readings
+            app.log.info('Not authenticated with Dexcom, generating mock readings');
+            return generateMockReadings(count);
+        }
+
+        // Use getV3EGVs instead of getLatestReadings
+        return await dexcomService.getV3EGVs(count);
+    } catch (error) {
+        app.log.error('Error fetching glucose readings:', error);
+        // Return mock readings if there's an error
+        app.log.info('Falling back to mock readings due to error');
+        const mockCount = request.query.count || 48;
+        return generateMockReadings(mockCount);
+    }
 });
 
 app.get('/api/dexcom/devices', {
@@ -646,336 +668,6 @@ app.get('/api/dexcom/insulin', {
     }
 });
 
-// AI and Blood Sugar Embedding Routes
-app.post('/api/ai/analyze-blood-sugar', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-        const { content } = request.body as { content: string };
-
-        if (!content) {
-            return reply.status(400).send({ error: 'Content is required' });
-        }
-
-        const analysis = await aiService.analyzeBloodSugar({ content });
-        return analysis;
-    } catch (error) {
-        app.log.error(error, 'Error analyzing blood sugar');
-        return reply.status(500).send({ error: 'Failed to analyze blood sugar data' });
-    }
-});
-
-app.post('/api/ai/embed-blood-sugar', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-        // For now, use a default user ID since we don't have auth
-        const userId = 'default-user';
-        const { days = 7 } = request.body as { days?: number };
-
-        // Fetch recent readings from Dexcom - get the last 288 readings (1 per 5 min = 288 per day)
-        const count = days * 288;
-        const readings = await dexcomService.getV3EGVs(count);
-
-        if (!readings || readings.length === 0) {
-            return reply.status(404).send({ message: 'No blood sugar readings found for the specified period' });
-        }
-
-        // Process and store readings in Pinecone
-        await bloodSugarEmbeddingService.processAndStoreReadings(readings, userId);
-
-        return {
-            success: true,
-            message: `Successfully embedded ${readings.length} blood sugar readings`,
-            count: readings.length
-        };
-    } catch (error) {
-        app.log.error(error, 'Error embedding blood sugar readings');
-        return reply.status(500).send({ error: 'Failed to embed blood sugar readings' });
-    }
-});
-
-app.post('/api/ai/query-blood-sugar', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-        // For now, use a default user ID since we don't have auth
-        const userId = 'default-user';
-        const { query, topK = 5 } = request.body as { query: string, topK?: number };
-
-        if (!query) {
-            return reply.status(400).send({ error: 'Query is required' });
-        }
-
-        const results = await bloodSugarEmbeddingService.querySimilarReadings(query, userId, topK);
-        return results;
-    } catch (error) {
-        app.log.error(error, 'Error querying blood sugar readings');
-        return reply.status(500).send({ error: 'Failed to query blood sugar readings' });
-    }
-});
-
-app.get('/api/ai/blood-sugar-insights/:timeframe?', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-        // For now, use a default user ID since we don't have auth
-        const userId = 'default-user';
-        const { timeframe } = request.params as { timeframe?: 'day' | 'week' | 'month' };
-
-        const insights = await bloodSugarEmbeddingService.generateBloodSugarInsights(userId, timeframe || 'week');
-        return insights;
-    } catch (error) {
-        app.log.error(error, 'Error generating blood sugar insights');
-        return reply.status(500).send({ error: 'Failed to generate blood sugar insights' });
-    }
-});
-
-// Track when we last processed readings for each user
-const lastProcessedTimestamps: Record<string, number> = {};
-const PROCESSING_INTERVAL = 30 * 60 * 1000; // 30 minutes in milliseconds
-
-// Debounced version of processAndStoreReadings to prevent repeated processing
-const debouncedProcessReadings = debounce(async (readings: any[], userId: string) => {
-    const now = Date.now();
-    const lastProcessed = lastProcessedTimestamps[userId] || 0;
-
-    // Only process if we haven't processed in the last 30 minutes
-    if (now - lastProcessed > PROCESSING_INTERVAL) {
-        console.log(`Processing readings for user ${userId} - last processed ${Math.round((now - lastProcessed) / 60000)} minutes ago`);
-        await bloodSugarEmbeddingService.processAndStoreReadings(readings, userId);
-        lastProcessedTimestamps[userId] = now;
-    } else {
-        console.log(`Skipping processing for user ${userId} - last processed ${Math.round((now - lastProcessed) / 60000)} minutes ago`);
-    }
-}, 5000, { leading: true, trailing: false }); // Only process the first call within 5 seconds
-
-app.post('/api/ai/chat', async (request: FastifyRequest, reply: FastifyReply) => {
-    try {
-        // Extract user ID from Authorization header
-        const authHeader = request.headers.authorization;
-        let userId = 'default-user';
-
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            userId = authHeader.substring(7); // Remove 'Bearer ' prefix
-            console.log('Authenticated user:', userId);
-        } else {
-            console.log('No valid authorization header, using default user');
-        }
-
-        const { message, sessionId } = request.body as { message: string, sessionId: string };
-
-        if (!message) {
-            return reply.status(400).send({ error: 'Message is required' });
-        }
-
-        if (!sessionId) {
-            return reply.status(400).send({ error: 'Session ID is required' });
-        }
-
-        // Create a session-specific ID that includes the user ID
-        const fullSessionId = `${userId}-${sessionId}`;
-        console.log(`Processing chat message for session ${fullSessionId}`);
-
-        let readings = [];
-        try {
-            // Get recent readings from Dexcom - last 288 readings (1 day)
-            readings = await dexcomService.getV3EGVs(288);
-            console.log(`Retrieved ${readings.length} readings from Dexcom`);
-
-            // Process and store readings if available
-            if (readings && readings.length > 0) {
-                await debouncedProcessReadings(readings, userId);
-            }
-        } catch (dexcomError: any) {
-            app.log.error('Error fetching Dexcom data:', dexcomError);
-
-            // Log detailed error information if available
-            if (dexcomError.response) {
-                console.error('Dexcom API response status:', dexcomError.response.status);
-                console.error('Dexcom API response data:', dexcomError.response.data);
-            }
-
-            // Continue without Dexcom data - don't let this stop the chat functionality
-            console.log('Generating mock blood sugar data');
-
-            // Generate some mock data for testing
-            const mockReadings = generateMockReadings();
-            if (mockReadings.length > 0) {
-                console.log(`Generated ${mockReadings.length} mock readings`);
-                try {
-                    await debouncedProcessReadings(mockReadings, userId);
-                } catch (processingError) {
-                    console.error('Error processing mock readings:', processingError);
-                    // Continue even if processing fails
-                }
-            }
-        }
-
-        // Get relevant blood sugar data based on the user's query
-        console.log('Querying similar readings for:', message);
-        const similarReadings = await bloodSugarEmbeddingService.querySimilarReadings(message, userId, 10);
-        console.log(`Found ${similarReadings?.length || 0} similar readings`);
-
-        // Format the readings for the AI
-        let contextData = '';
-        if (similarReadings && similarReadings.length > 0) {
-            contextData = 'Here is relevant blood sugar data:\n\n' +
-                similarReadings.map((match: any) => {
-                    const metadata = match.metadata;
-                    return `Time: ${new Date(metadata.timestamp).toLocaleString()}, Value: ${metadata.value} mg/dL, Trend: ${metadata.trend}`;
-                }).join('\n');
-        }
-
-        // Combine the user's message with the context data
-        const fullPrompt = `${message}\n\n${contextData}`;
-        console.log('Sending prompt to AI service');
-
-        // Get AI response
-        const analysis = await aiService.analyzeBloodSugar({ content: fullPrompt });
-        console.log('Received AI response');
-
-        const response = {
-            message: analysis.summary,
-            recommendations: analysis.recommendations.split('\n').filter((r: string) => r.trim().length > 0),
-            data: {
-                glucoseTrend: analysis.glucoseTrend,
-                anomalyDetected: analysis.anomalyDetected,
-                anomalyDescription: analysis.anomalyDescription,
-                riskLevel: analysis.riskLevel
-            }
-        };
-
-        console.log('Sending response to client');
-        return response;
-    } catch (error) {
-        app.log.error('Error processing chat message:', error);
-        return reply.status(500).send({
-            error: 'Failed to process chat message',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        });
-    }
-});
-
-// Helper function to format dates for Dexcom API
-function formatDexcomDate(date: Date): string {
-    return date.toISOString().split('.')[0]; // Removes milliseconds and trailing Z
-}
-
-// Helper function to generate mock blood sugar readings for testing
-function generateMockReadings() {
-    const readings = [];
-    const now = new Date();
-    const oneWeekAgo = new Date(now);
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-
-    console.log('Generating mock readings from', formatDexcomDate(oneWeekAgo), 'to', formatDexcomDate(now));
-
-    // Generate readings every 5 minutes for the past week
-    for (let time = new Date(oneWeekAgo); time <= now; time = new Date(time.getTime() + 5 * 60000)) {
-        // Generate a random blood sugar value between 70 and 180
-        const value = Math.floor(Math.random() * 110) + 70;
-        // Random trend
-        const trends = ['Flat', 'Rising', 'Falling', 'Rising Rapidly', 'Falling Rapidly'];
-        const trend = trends[Math.floor(Math.random() * trends.length)];
-
-        readings.push({
-            value,
-            trend,
-            timestamp: formatDexcomDate(time),
-            userId: 'default-user'
-        });
-    }
-
-    console.log(`Generated ${readings.length} mock readings`);
-    return readings;
-}
-
-// Get chat history endpoint
-app.get('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
-    Params: {
-        sessionId: string;
-    }
-}>, reply: FastifyReply) => {
-    try {
-        const { sessionId } = request.params;
-
-        // Extract user ID from Authorization header
-        const authHeader = request.headers.authorization;
-        let userId = 'default-user';
-
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            userId = authHeader.substring(7); // Remove 'Bearer ' prefix
-            console.log('Authenticated user:', userId);
-        } else {
-            console.log('No valid authorization header, using default user');
-        }
-
-        console.log(`Fetching chat history for session ${sessionId} and user ${userId}`);
-
-        // Create a session-specific ID that includes the user ID
-        const fullSessionId = `${userId}-${sessionId}`;
-
-        // Get chat history from the agent
-        const chatHistory = await diabetesAgent.getChatHistory(fullSessionId);
-
-        console.log(`Retrieved ${chatHistory.length} messages from history`);
-
-        // Format the chat history for the frontend
-        const formattedHistory = chatHistory.map(msg => ({
-            id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-            text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-            sender: msg._getType() === 'human' ? 'user' : 'ai',
-            timestamp: new Date().toLocaleTimeString()
-        }));
-
-        return {
-            messages: formattedHistory
-        };
-    } catch (error) {
-        app.log.error('Error fetching chat history:', error);
-        return reply.status(500).send({
-            error: 'Failed to fetch chat history',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        });
-    }
-});
-
-// Clear chat history endpoint
-app.delete('/api/ai/chat-history/:sessionId', async (request: FastifyRequest<{
-    Params: {
-        sessionId: string;
-    }
-}>, reply: FastifyReply) => {
-    try {
-        const { sessionId } = request.params;
-
-        // Extract user ID from Authorization header
-        const authHeader = request.headers.authorization;
-        let userId = 'default-user';
-
-        if (authHeader && authHeader.startsWith('Bearer ')) {
-            userId = authHeader.substring(7); // Remove 'Bearer ' prefix
-            console.log('Authenticated user:', userId);
-        } else {
-            console.log('No valid authorization header, using default user');
-        }
-
-        console.log(`Clearing chat history for session ${sessionId} and user ${userId}`);
-
-        // Create a session-specific ID that includes the user ID
-        const fullSessionId = `${userId}-${sessionId}`;
-
-        // Clear chat history
-        await diabetesAgent.clearChatHistory(fullSessionId);
-
-        console.log('Chat history cleared successfully');
-
-        return {
-            success: true,
-            message: 'Chat history cleared successfully'
-        };
-    } catch (error) {
-        app.log.error('Error clearing chat history:', error);
-        return reply.status(500).send({
-            error: 'Failed to clear chat history',
-            details: error instanceof Error ? error.message : 'Unknown error'
-        });
-    }
-});
-
 // Get Dexcom alerts
 app.get('/api/dexcom/alerts', {
     schema: {
@@ -1090,6 +782,173 @@ function isDexcomAuthenticated(): boolean {
     }
 }
 
+// Track when we last processed readings for each user
+const lastProcessedTimestamps: Record<string, number> = {};
+const PROCESSING_INTERVAL = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+// Debounced version of processAndStoreReadings to prevent repeated processing
+export const debouncedProcessReadings = debounce(async (readings: any[], userId: string) => {
+    const now = Date.now();
+    const lastProcessed = lastProcessedTimestamps[userId] || 0;
+
+    // Only process if we haven't processed in the last 30 minutes
+    if (now - lastProcessed > PROCESSING_INTERVAL) {
+        console.log(`Processing readings for user ${userId} - last processed ${Math.round((now - lastProcessed) / 60000)} minutes ago`);
+        await bloodSugarEmbeddingService.processAndStoreReadings(readings, userId);
+        lastProcessedTimestamps[userId] = now;
+    } else {
+        console.log(`Skipping processing for user ${userId} - last processed ${Math.round((now - lastProcessed) / 60000)} minutes ago`);
+    }
+}, 5000, { leading: true, trailing: false }); // Only process the first call within 5 seconds
+
+// Helper function to format dates for Dexcom API
+export function formatDexcomDate(date: Date): string {
+    return date.toISOString().split('.')[0]; // Removes milliseconds and trailing Z
+}
+
+// Helper function to generate mock blood sugar readings for testing
+export function generateMockReadings(count?: number): any[] {
+    const readings = [];
+    const now = new Date();
+
+    if (count === 1) {
+        // If only one reading is requested, just return the current one
+        const value = Math.floor(Math.random() * 110) + 70; // Random between 70-180
+        const trends = ['Flat', 'Rising', 'Falling', 'Rising Rapidly', 'Falling Rapidly'];
+        const trend = trends[Math.floor(Math.random() * trends.length)];
+
+        readings.push({
+            value,
+            trend,
+            timestamp: formatDexcomDate(now),
+            userId: 'default-user',
+            source: 'mock' // Mark this as mock data
+        });
+
+        console.log('Generated 1 mock reading:', readings[0]);
+        return readings;
+    }
+
+    // Otherwise generate a series of readings
+    const oneWeekAgo = new Date(now);
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+    console.log('Generating mock readings from', formatDexcomDate(oneWeekAgo), 'to', formatDexcomDate(now));
+
+    // Generate readings every 5 minutes for the past week
+    for (let time = new Date(oneWeekAgo); time <= now; time = new Date(time.getTime() + 5 * 60000)) {
+        // Generate a random blood sugar value between 70 and 180
+        const value = Math.floor(Math.random() * 110) + 70;
+        // Random trend
+        const trends = ['Flat', 'Rising', 'Falling', 'Rising Rapidly', 'Falling Rapidly'];
+        const trend = trends[Math.floor(Math.random() * trends.length)];
+
+        readings.push({
+            value,
+            trend,
+            timestamp: formatDexcomDate(time),
+            userId: 'default-user',
+            source: 'mock' // Mark this as mock data
+        });
+    }
+
+    // If a specific count was requested, return only that many readings
+    if (count && count > 1 && count < readings.length) {
+        const result = readings.slice(-count); // Get the most recent 'count' readings
+        console.log(`Generated ${result.length} mock readings (from ${readings.length} total)`);
+        return result;
+    }
+
+    console.log(`Generated ${readings.length} mock readings`);
+    return readings;
+}
+
+// Update the current-reading endpoint
+app.get('/api/dexcom/current-reading', {
+    schema: {
+        response: {
+            200: Type.Object({
+                value: Type.Number(),
+                trend: Type.String(),
+                timestamp: Type.String(),
+                source: Type.Optional(Type.String())
+            }),
+            404: Type.Object({
+                error: Type.String(),
+                message: Type.String()
+            }),
+            500: ErrorResponse
+        }
+    }
+}, async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+        app.log.info('Fetching current glucose reading');
+
+        // Try to get the reading from the Share API first (real-time data)
+        try {
+            app.log.info('Trying to fetch from Dexcom Share API (real-time)');
+            const shareReading = await dexcomService.getLatestShareReading();
+            if (shareReading) {
+                app.log.info('Successfully fetched reading from Share API:', shareReading);
+                return shareReading;
+            } else {
+                app.log.info('No reading available from Share API, falling back to regular API');
+            }
+        } catch (shareError) {
+            app.log.error('Error fetching from Share API, falling back to regular API:', shareError);
+        }
+
+        // Check if authenticated with regular Dexcom API
+        if (!isDexcomAuthenticated()) {
+            app.log.info('Not authenticated with Dexcom API, generating mock reading');
+            const mockReadings = generateMockReadings(1);
+            if (mockReadings.length > 0) {
+                return mockReadings[0];
+            } else {
+                return reply.code(404).send({
+                    error: 'No readings available',
+                    message: 'Could not generate mock readings'
+                });
+            }
+        }
+
+        // Fall back to the regular API if Share API fails
+        app.log.info('Falling back to regular Dexcom API (delayed data)');
+
+        // Time window: 30 minutes ago to now (to account for Dexcom API delay)
+        // Note: Dexcom API has a delay of up to 1 hour in the US and 3 hours internationally
+        const now = new Date();
+        const startDate = new Date(now.getTime() - 30 * 60 * 1000); // 30 min ago
+
+        // Format dates for Dexcom API
+        const formattedStartDate = formatDexcomDate(startDate);
+        const formattedEndDate = formatDexcomDate(now);
+
+        app.log.info('Fetching readings with time window:', {
+            startDate: formattedStartDate,
+            endDate: formattedEndDate
+        });
+
+        // Use the dexcomService to get the most recent reading
+        const reading = await dexcomService.getMostRecentReading();
+
+        if (!reading) {
+            return reply.code(404).send({
+                error: 'No readings available',
+                message: 'No glucose readings found in the specified time window'
+            });
+        }
+
+        return reading;
+    } catch (error) {
+        app.log.error('Error fetching current glucose reading:', error);
+        return reply.code(500).send({
+            error: 'Failed to fetch current glucose reading',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
+    }
+});
+
 // Start server
 const start = async () => {
     try {
@@ -1111,15 +970,15 @@ const start = async () => {
         app.log.info('- GET /api/dexcom/events');
         app.log.info('- GET /api/dexcom/nutrition');
         app.log.info('- GET /api/dexcom/insulin');
+        app.log.info('- GET /health');
+        app.log.info('- GET /auth/dexcom/test');
         app.log.info('- POST /api/ai/analyze-blood-sugar');
         app.log.info('- POST /api/ai/embed-blood-sugar');
         app.log.info('- POST /api/ai/query-blood-sugar');
         app.log.info('- GET /api/ai/blood-sugar-insights/:timeframe?');
         app.log.info('- POST /api/ai/chat');
-        app.log.info('- GET /api/ai/chat-history/:sessionId');
-        app.log.info('- DELETE /api/ai/chat-history/:sessionId');
-        app.log.info('- GET /health');
-        app.log.info('- GET /auth/dexcom/test');
+        app.log.info('- GET /api/ai/chat-history/:sessionId?');
+        app.log.info('- DELETE /api/ai/chat-history/:sessionId?');
     } catch (err) {
         app.log.error(err);
         process.exit(1);

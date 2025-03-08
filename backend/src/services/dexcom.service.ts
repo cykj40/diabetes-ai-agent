@@ -6,6 +6,7 @@ export interface DexcomReading {
     value: number;
     trend: string;
     timestamp: string;
+    source?: 'api' | 'share' | 'mock'; // Source of the reading
 }
 
 export interface DexcomTokens {
@@ -161,6 +162,12 @@ export interface DexcomAlertsResponse {
     recordVersion: string;
     userId: string;
     records: DexcomAlert[];
+}
+
+export interface DexcomShareReading {
+    Value: number;
+    Trend: number;
+    DT: string;
 }
 
 export class DexcomService {
@@ -557,7 +564,8 @@ export class DexcomService {
                 return {
                     value: record.value || 0,
                     trend: trendValue,
-                    timestamp: record.systemTime
+                    timestamp: record.systemTime,
+                    source: 'api' // Mark this as coming from the official API
                 };
             });
         } catch (error: any) {
@@ -571,37 +579,30 @@ export class DexcomService {
     }
 
     private generateMockReadings(count: number): DexcomReading[] {
-        console.log('Generating mock blood sugar data');
-        const mockReadings: DexcomReading[] = [];
+        const readings: DexcomReading[] = [];
+        const now = new Date();
 
-        // Use current date instead of fixed date from 2023
-        const endDate = new Date();
-
+        // Generate random readings
         for (let i = 0; i < count; i++) {
-            const timestamp = new Date(endDate.getTime() - (i * 5 * 60 * 1000));
-            const baseValue = 140;
-            const variation = Math.sin(i / 12) * 30;
-            const randomness = (Math.random() - 0.5) * 20;
-            const value = Math.round(baseValue + variation + randomness);
+            const minutesAgo = i * 5; // 5-minute intervals
+            const timestamp = new Date(now.getTime() - minutesAgo * 60 * 1000);
 
-            let trend: string;
-            if (i === 0 || mockReadings.length === 0) {
-                trend = 'Stable';
-            } else {
-                const prevValue = mockReadings[mockReadings.length - 1].value;
-                if (value > prevValue + 10) trend = 'Rising';
-                else if (value < prevValue - 10) trend = 'Falling';
-                else trend = 'Stable';
-            }
+            // Random blood sugar between 70 and 180
+            const value = Math.floor(Math.random() * 110) + 70;
 
-            mockReadings.push({
+            // Random trend
+            const trends = ['Flat', 'Rising', 'Falling', 'Rising Rapidly', 'Falling Rapidly'];
+            const trend = trends[Math.floor(Math.random() * trends.length)];
+
+            readings.push({
                 value,
                 trend,
-                timestamp: timestamp.toISOString()
+                timestamp: timestamp.toISOString(),
+                source: 'mock' // Mark this as mock data
             });
         }
 
-        return mockReadings.reverse();
+        return readings;
     }
 
     async getAlerts(startDate: Date, endDate: Date): Promise<DexcomAlert[]> {
@@ -1162,6 +1163,261 @@ export class DexcomService {
             console.error('Error in getLatestReadings:', error);
             console.log('Falling back to mock data due to error');
             return this.generateMockReadings(count);
+        }
+    }
+
+    async getMostRecentReading(): Promise<DexcomReading | null> {
+        try {
+            // Use a 30-minute window to account for Dexcom API delay
+            // Note: Dexcom API has a delay of up to 1 hour in the US and 3 hours internationally
+            const endDate = new Date();
+            const startDate = new Date(endDate.getTime() - 30 * 60 * 1000); // 30 minutes ago
+
+            // Format dates for Dexcom API
+            const formattedStartDate = this.formatDexcomDate(startDate);
+            const formattedEndDate = this.formatDexcomDate(endDate);
+
+            console.log('Fetching most recent reading with time window:', {
+                startDate: formattedStartDate,
+                endDate: formattedEndDate
+            });
+
+            if (!await this.ensureValidToken()) {
+                console.log('No valid token, returning mock reading');
+                const mockReadings = this.generateMockReadings(1);
+                return mockReadings.length > 0 ? mockReadings[0] : null;
+            }
+
+            try {
+                // Try V3 API first
+                const response = await axios.get<DexcomV3Response>(`${this.apiUrl}/v3/users/self/egvs`, {
+                    headers: {
+                        'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                    },
+                    params: {
+                        startDate: formattedStartDate,
+                        endDate: formattedEndDate
+                    }
+                });
+
+                if (response.data.records && response.data.records.length > 0) {
+                    // Sort by timestamp to ensure we get the most recent
+                    const sortedRecords = [...response.data.records].sort((a, b) =>
+                        new Date(b.systemTime).getTime() - new Date(a.systemTime).getTime()
+                    );
+
+                    // Convert to our standard format
+                    const mostRecent = sortedRecords[0];
+                    console.log('Found most recent reading:', mostRecent);
+
+                    // Convert trend values from v3 to v2 format
+                    let trendValue = 'Flat';
+                    switch (mostRecent.trend) {
+                        case 'doubleUp':
+                            trendValue = 'Rising Rapidly';
+                            break;
+                        case 'singleUp':
+                            trendValue = 'Rising';
+                            break;
+                        case 'fortyFiveUp':
+                            trendValue = 'Rising Slightly';
+                            break;
+                        case 'flat':
+                            trendValue = 'Flat';
+                            break;
+                        case 'fortyFiveDown':
+                            trendValue = 'Falling Slightly';
+                            break;
+                        case 'singleDown':
+                            trendValue = 'Falling';
+                            break;
+                        case 'doubleDown':
+                            trendValue = 'Falling Rapidly';
+                            break;
+                        default:
+                            trendValue = 'Flat';
+                    }
+
+                    return {
+                        value: mostRecent.value || 0, // Provide a default value of 0 if undefined
+                        trend: trendValue,
+                        timestamp: mostRecent.systemTime,
+                        source: 'api' // Mark this as coming from the official API
+                    };
+                } else {
+                    console.log('No readings found in the time window');
+                    return null;
+                }
+            } catch (v3Error) {
+                console.error('Error using V3 API, falling back to V2:', v3Error);
+
+                // Fall back to V2 API
+                try {
+                    const response = await axios.get(`${this.apiUrl}/v2/users/self/egvs`, {
+                        headers: {
+                            'Authorization': `Bearer ${this.tokenSet!.access_token}`
+                        },
+                        params: {
+                            startDate: formattedStartDate,
+                            endDate: formattedEndDate
+                        }
+                    });
+
+                    if (response.data.records && response.data.records.length > 0) {
+                        // Sort by timestamp to ensure we get the most recent
+                        const sortedRecords = [...response.data.records].sort((a, b) =>
+                            new Date(b.systemTime).getTime() - new Date(a.systemTime).getTime()
+                        );
+
+                        const mostRecent = sortedRecords[0];
+                        console.log('Found most recent reading (V2):', mostRecent);
+
+                        return {
+                            value: mostRecent.value || 0, // Provide a default value of 0 if undefined
+                            trend: mostRecent.trend,
+                            timestamp: mostRecent.systemTime,
+                            source: 'api' // Mark this as coming from the official API
+                        };
+                    } else {
+                        console.log('No readings found in the time window (V2)');
+                        return null;
+                    }
+                } catch (v2Error) {
+                    console.error('Error using V2 API, falling back to mock data:', v2Error);
+                    const mockReadings = this.generateMockReadings(1);
+                    return mockReadings.length > 0 ? mockReadings[0] : null;
+                }
+            }
+        } catch (error) {
+            console.error('Error fetching most recent reading:', error);
+            const mockReadings = this.generateMockReadings(1);
+            return mockReadings.length > 0 ? mockReadings[0] : null;
+        }
+    }
+
+    private async getShareSessionId(): Promise<string | null> {
+        try {
+            // Get credentials from environment variables
+            const username = process.env.DEXCOM_SHARE_USERNAME;
+            const password = process.env.DEXCOM_SHARE_PASSWORD;
+
+            if (!username || !password) {
+                console.log('Dexcom Share credentials not configured in environment variables');
+                return null;
+            }
+
+            console.log('Authenticating with Dexcom Share API...');
+
+            // Step 1: Get Session ID using the correct endpoint and parameters
+            const response = await axios.post(
+                'https://share1.dexcom.com/ShareWebServices/Services/General/LoginPublisherAccountByName',
+                {
+                    accountName: username,
+                    password: password,
+                    applicationId: "d8665ade-9673-4e27-9ff6-92db4ce13d13"
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Dexcom Share/3.0.2.11 CFNetwork/711.5.6 Darwin/14.0.0'
+                    }
+                }
+            );
+
+            // The response should be a session ID string in quotes
+            const sessionId = response.data.replace(/"/g, '');
+            console.log('Successfully authenticated with Dexcom Share API, got session ID');
+
+            return sessionId;
+        } catch (error) {
+            console.error('Error authenticating with Dexcom Share API:', error);
+            return null;
+        }
+    }
+
+    async getLatestShareReading(): Promise<DexcomReading | null> {
+        try {
+            // First, authenticate with the Share API
+            const sessionId = await this.getShareSessionId();
+            if (!sessionId) {
+                console.log('Failed to authenticate with Dexcom Share API');
+                return null;
+            }
+
+            console.log('Fetching latest reading from Dexcom Share API...');
+
+            // Step 2: Fetch the latest glucose reading
+            const response = await axios.post<DexcomShareReading[]>(
+                'https://share1.dexcom.com/ShareWebServices/Services/Publisher/ReadPublisherLatestGlucoseValues',
+                {
+                    sessionId: sessionId,
+                    minutes: 1440, // Last 24 hours
+                    maxCount: 1    // Just get the latest reading
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Dexcom Share/3.0.2.11 CFNetwork/711.5.6 Darwin/14.0.0'
+                    }
+                }
+            );
+
+            if (!response.data || response.data.length === 0) {
+                console.log('No readings returned from Dexcom Share API');
+                return null;
+            }
+
+            // Get the latest reading (should be only one since maxCount=1)
+            const shareReading = response.data[0];
+            console.log('Latest reading from Dexcom Share API:', shareReading);
+
+            // Convert the trend value to a string
+            let trendString = 'Flat';
+            switch (shareReading.Trend) {
+                case 1:
+                    trendString = 'Rising Rapidly';
+                    break;
+                case 2:
+                    trendString = 'Rising';
+                    break;
+                case 3:
+                    trendString = 'Rising Slightly';
+                    break;
+                case 4:
+                    trendString = 'Flat';
+                    break;
+                case 5:
+                    trendString = 'Falling Slightly';
+                    break;
+                case 6:
+                    trendString = 'Falling';
+                    break;
+                case 7:
+                    trendString = 'Falling Rapidly';
+                    break;
+                default:
+                    trendString = 'Flat';
+            }
+
+            // Convert the date format
+            // The DT format is like "/Date(1426290216000-0700)/"
+            const dateMatch = shareReading.DT.match(/\((\d+)[-+](\d{4})\)/);
+            let timestamp = new Date().toISOString();
+
+            if (dateMatch && dateMatch[1]) {
+                const milliseconds = parseInt(dateMatch[1], 10);
+                timestamp = new Date(milliseconds).toISOString();
+            }
+
+            return {
+                value: shareReading.Value,
+                trend: trendString,
+                timestamp: timestamp,
+                source: 'share' // Mark this as coming from the Share API
+            };
+        } catch (error) {
+            console.error('Error fetching from Dexcom Share API:', error);
+            return null;
         }
     }
 } 

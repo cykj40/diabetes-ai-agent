@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { BsSend, BsArrowRepeat, BsTrash } from 'react-icons/bs';
 import ChatHeader from './ChatHeader';
 import ChatMessage from './ChatMessage';
+import ClientOnly from './ClientOnly';
 
 interface Message {
     id: string;
@@ -35,18 +36,37 @@ interface ApiResponse {
 const BACKEND_URL = 'http://localhost:3001'; // Hardcoded backend URL for reliability
 
 export default function AIChat() {
-    const [messages, setMessages] = useState<Message[]>([{
-        id: '1',
-        text: "Hello! I'm your diabetes AI assistant. How can I help you today?",
-        sender: 'ai',
-        timestamp: new Date().toLocaleTimeString()
-    }]);
+    // Use a ref for session ID to keep it stable across renders
+    const sessionIdRef = useRef<string>('');
+
+    // Initialize state
+    const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [isEmbedding, setIsEmbedding] = useState(false);
     const chatContainerRef = useRef<HTMLDivElement>(null);
-    const [isClient, setIsClient] = useState(false);
-    const sessionId = 'session-' + Date.now();
+
+    // Initialize session ID and welcome message on client-side only
+    useEffect(() => {
+        // Generate session ID once on client-side
+        if (!sessionIdRef.current) {
+            sessionIdRef.current = 'session-' + Date.now();
+        }
+
+        // Set initial welcome message
+        setMessages([{
+            id: '1',
+            text: "Hello! I'm your diabetes AI assistant. How can I help you today?",
+            sender: 'ai',
+            timestamp: new Date().toLocaleTimeString()
+        }]);
+
+        // Fetch chat history if needed
+        fetchChatHistory();
+    }, []);
+
+    // Get session ID safely
+    const getSessionId = () => sessionIdRef.current;
 
     // Auto-scroll to bottom when new messages arrive
     useEffect(() => {
@@ -55,14 +75,6 @@ export default function AIChat() {
         }
     }, [messages]);
 
-    useEffect(() => {
-        // This will only run on the client
-        setIsClient(true);
-
-        // Fetch chat history
-        fetchChatHistory();
-    }, []);
-
     const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         setInput(e.target.value);
     };
@@ -70,7 +82,7 @@ export default function AIChat() {
     const fetchChatHistory = async () => {
         try {
             // Use the frontend API route instead of directly calling the backend
-            const response = await fetch(`/api/ai/chat-history/${sessionId}`, {
+            const response = await fetch(`/api/ai/chat-history/${getSessionId()}`, {
                 headers: {
                     'Accept': 'application/json'
                 }
@@ -100,7 +112,7 @@ export default function AIChat() {
         try {
             setIsLoading(true);
             // Use the frontend API route instead of directly calling the backend
-            const response = await fetch(`/api/ai/chat-history/${sessionId}`, {
+            const response = await fetch(`/api/ai/chat-history/${getSessionId()}`, {
                 method: 'DELETE',
                 headers: {
                     'Accept': 'application/json'
@@ -144,7 +156,7 @@ export default function AIChat() {
 
             const requestBody = {
                 message: input,
-                sessionId: sessionId
+                sessionId: getSessionId()
             };
             console.log('Request body:', JSON.stringify(requestBody));
 
@@ -260,71 +272,77 @@ export default function AIChat() {
     };
 
     return (
-        <div className="flex flex-col h-full bg-white rounded-lg shadow-lg overflow-hidden">
-            <div className="flex justify-between items-center p-4 border-b">
-                <ChatHeader title="AI Chat" />
-                {isClient && (
+        <ClientOnly fallback={<div className="h-[600px] bg-gray-100 animate-pulse rounded-lg"></div>}>
+            <div className="bg-white rounded-lg shadow-md overflow-hidden h-[600px] flex flex-col">
+                <div className="flex justify-between items-center p-4 border-b">
+                    <ChatHeader title="AI Chat" />
                     <div className="flex space-x-2">
                         <button
-                            onClick={embedBloodSugarData}
-                            disabled={isEmbedding || isLoading}
-                            className="flex items-center text-sm text-blue-600 hover:text-blue-800 disabled:text-gray-400"
+                            onClick={clearChatHistory}
+                            className="p-2 text-gray-500 hover:text-red-500 rounded-full hover:bg-gray-100"
+                            title="Clear chat history"
                         >
-                            <BsArrowRepeat className={`mr-1 ${isEmbedding ? 'animate-spin' : ''}`} />
-                            {isEmbedding ? 'Processing...' : 'Embed Blood Sugar Data'}
+                            <BsTrash />
                         </button>
                         <button
-                            onClick={clearChatHistory}
-                            disabled={isLoading}
-                            className="flex items-center text-sm text-red-600 hover:text-red-800 disabled:text-gray-400"
+                            onClick={embedBloodSugarData}
+                            disabled={isEmbedding}
+                            className={`p-2 rounded-full ${isEmbedding
+                                    ? 'text-gray-400 cursor-not-allowed'
+                                    : 'text-gray-500 hover:text-blue-500 hover:bg-gray-100'
+                                }`}
+                            title="Embed blood sugar data"
                         >
-                            <BsTrash className="mr-1" />
-                            Clear History
+                            <BsArrowRepeat className={isEmbedding ? 'animate-spin' : ''} />
                         </button>
                     </div>
-                )}
-            </div>
+                </div>
 
-            <div className="flex-1 overflow-y-auto p-4" ref={chatContainerRef}>
-                {messages.map((message) => (
-                    <ChatMessage
-                        key={message.id}
-                        id={message.id}
-                        text={message.text}
-                        sender={message.sender}
-                        timestamp={message.timestamp}
-                        chartData={message.chartData}
-                    />
-                ))}
-                {isLoading && (
-                    <div className="flex justify-center items-center py-4">
-                        <div className="animate-pulse text-gray-500">AI is thinking...</div>
-                    </div>
-                )}
-            </div>
+                <div
+                    ref={chatContainerRef}
+                    className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50"
+                >
+                    {messages.map(message => (
+                        <ChatMessage
+                            key={message.id}
+                            id={message.id}
+                            text={message.text}
+                            sender={message.sender}
+                            timestamp={message.timestamp}
+                            chartData={message.chartData}
+                        />
+                    ))}
+                    {isLoading && (
+                        <div className="flex justify-center items-center py-4">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-500"></div>
+                        </div>
+                    )}
+                </div>
 
-            {isClient && (
                 <form onSubmit={sendMessage} className="p-4 border-t">
                     <div className="flex space-x-2">
                         <input
                             type="text"
                             value={input}
                             onChange={handleInputChange}
-                            placeholder="Ask about your blood sugar data..."
-                            className="flex-1 rounded-lg border border-gray-300 px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="Type your message..."
+                            className="flex-1 p-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            disabled={isLoading}
                         />
                         <button
                             type="submit"
-                            disabled={isLoading || !input.trim()}
-                            className={`px-4 py-2 rounded-lg bg-blue-500 text-white flex items-center space-x-2 ${(isLoading || isEmbedding) ? 'opacity-50 cursor-not-allowed' : 'hover:bg-blue-600'}`}
+                            disabled={!input.trim() || isLoading}
+                            className={`p-2 rounded-lg ${!input.trim() || isLoading
+                                    ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                                }`}
                         >
-                            <span>Send</span>
                             <BsSend />
                         </button>
                     </div>
                 </form>
-            )}
-        </div>
+            </div>
+        </ClientOnly>
     );
 }
 

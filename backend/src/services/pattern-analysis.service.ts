@@ -1,5 +1,5 @@
 import { PrismaClient } from '@prisma/client';
-import { DexcomReading } from './dexcom.service';
+import { DexcomReading, DexcomService } from './dexcom.service';
 import crypto from 'crypto';
 
 interface PatternAnalysis {
@@ -23,9 +23,11 @@ interface PatternAnalysis {
 
 export class PatternAnalysisService {
     private prisma: PrismaClient;
+    private dexcomService: DexcomService;
 
     constructor() {
         this.prisma = new PrismaClient();
+        this.dexcomService = new DexcomService();
     }
 
     async storeReading(reading: DexcomReading, sessionId: string, userId: string = 'default-user'): Promise<void> {
@@ -66,6 +68,7 @@ export class PatternAnalysisService {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - days);
 
+        // First try to get readings from the database
         const readings = await this.prisma.bloodSugarReading.findMany({
             where: {
                 sessionId,
@@ -78,6 +81,31 @@ export class PatternAnalysisService {
             },
         });
 
+        // If no readings in database, try to get them directly from Dexcom
+        let allReadings: any[] = readings;
+        if (readings.length === 0) {
+            console.log('No readings found in database, fetching from Dexcom service...');
+            try {
+                const dexcomReadings = await this.dexcomService.getLatestReadings(days * 288); // 288 readings per day (5-minute intervals)
+
+                // Filter to only include readings from the past 'days' days
+                allReadings = dexcomReadings.filter(reading => {
+                    const readingDate = new Date(reading.timestamp);
+                    return readingDate >= startDate;
+                });
+
+                console.log(`Retrieved ${allReadings.length} readings from Dexcom service`);
+
+                // Store these readings in the database for future use
+                for (const reading of allReadings) {
+                    await this.storeReading(reading, sessionId);
+                }
+            } catch (error) {
+                console.error('Error fetching readings from Dexcom service:', error);
+                // Continue with empty readings if Dexcom fetch fails
+            }
+        }
+
         const timeSlots: Record<string, number[]> = {
             morning: [],   // 6-11
             afternoon: [], // 12-17
@@ -85,8 +113,9 @@ export class PatternAnalysisService {
             night: [],     // 0-5
         };
 
-        readings.forEach(reading => {
-            const hour = reading.timestamp.getHours();
+        allReadings.forEach(reading => {
+            const timestamp = reading.timestamp instanceof Date ? reading.timestamp : new Date(reading.timestamp);
+            const hour = timestamp.getHours();
             if (hour >= 6 && hour < 12) timeSlots.morning.push(reading.value);
             else if (hour >= 12 && hour < 18) timeSlots.afternoon.push(reading.value);
             else if (hour >= 18) timeSlots.evening.push(reading.value);
@@ -103,6 +132,7 @@ export class PatternAnalysisService {
         const startDate = new Date();
         startDate.setDate(startDate.getDate() - 7);
 
+        // First try to get readings from the database
         const readings = await this.prisma.bloodSugarReading.findMany({
             where: {
                 sessionId,
@@ -115,11 +145,37 @@ export class PatternAnalysisService {
             },
         });
 
+        // If no readings in database, try to get them directly from Dexcom
+        let allReadings: any[] = readings;
+        if (readings.length === 0) {
+            console.log('No readings found in database for weekly patterns, fetching from Dexcom service...');
+            try {
+                const dexcomReadings = await this.dexcomService.getLatestReadings(2016); // 7 days * 24 hours * 12 readings per hour (5-min intervals)
+
+                // Filter to only include readings from the past week
+                allReadings = dexcomReadings.filter(reading => {
+                    const readingDate = new Date(reading.timestamp);
+                    return readingDate >= startDate;
+                });
+
+                console.log(`Retrieved ${allReadings.length} readings from Dexcom service for weekly patterns`);
+
+                // Store these readings in the database for future use
+                for (const reading of allReadings) {
+                    await this.storeReading(reading, sessionId);
+                }
+            } catch (error) {
+                console.error('Error fetching readings from Dexcom service for weekly patterns:', error);
+                // Continue with empty readings if Dexcom fetch fails
+            }
+        }
+
         const dayGroups: Record<string, number[]> = {};
         const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-        readings.forEach(reading => {
-            const day = days[reading.timestamp.getDay()];
+        allReadings.forEach(reading => {
+            const timestamp = reading.timestamp instanceof Date ? reading.timestamp : new Date(reading.timestamp);
+            const day = days[timestamp.getDay()];
             if (!dayGroups[day]) dayGroups[day] = [];
             dayGroups[day].push(reading.value);
         });

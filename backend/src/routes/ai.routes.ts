@@ -3,6 +3,7 @@ import { AIService } from '../services/ai.service';
 import { BloodSugarEmbeddingService } from '../services/blood-sugar-embedding.service';
 import { DexcomService } from '../services/dexcom.service';
 import { DiabetesAgent } from '../services/diabetes-agent';
+import { DiabetesAgentService } from '../services/agent.service';
 import { formatDexcomDate, generateMockReadings, debouncedProcessReadings } from '../server';
 
 // Define route parameter types
@@ -34,6 +35,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     const bloodSugarEmbeddingService = new BloodSugarEmbeddingService();
     const dexcomService = new DexcomService();
     const diabetesAgent = new DiabetesAgent();
+    const diabetesAgentService = new DiabetesAgentService();
 
     // Initialize the embedding service when the server starts
     try {
@@ -214,6 +216,52 @@ export default async function aiRoutes(fastify: FastifyInstance) {
             console.error('Error processing chat message:', error);
             return reply.code(500).send({
                 error: 'Failed to process chat message',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
+    // Agent API endpoint with tool calls
+    fastify.post<{ Body: ChatBody }>('/agent', async (request, reply) => {
+        try {
+            // Extract user ID from authorization header
+            const authHeader = request.headers.authorization;
+            let userId = 'default-user';
+
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            }
+
+            const { message, sessionId = 'default' } = request.body;
+
+            if (!message) {
+                return reply.code(400).send({ error: 'Message is required' });
+            }
+
+            // Use the DiabetesAgentService to process the message with tool calls
+            const result = await diabetesAgentService.ask(message, userId, sessionId);
+
+            // Get the chat history to include in the response
+            const fullSessionId = `${userId}-${sessionId}`;
+            const chatHistory = await diabetesAgentService.getChatHistory(fullSessionId);
+
+            // Format the response for the frontend
+            const response = {
+                message: result.output,
+                chatHistory: chatHistory.map(msg => ({
+                    id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                    text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
+                    sender: msg._getType() === 'human' ? 'user' : 'ai',
+                    timestamp: new Date().toLocaleTimeString()
+                })),
+                sessionId: fullSessionId
+            };
+
+            return response;
+        } catch (error) {
+            console.error('Error processing agent message:', error);
+            return reply.code(500).send({
+                error: 'Failed to process agent message',
                 details: error instanceof Error ? error.message : 'Unknown error'
             });
         }

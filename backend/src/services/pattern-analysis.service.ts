@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import { DexcomReading } from './dexcom.service';
+import crypto from 'crypto';
 
 interface PatternAnalysis {
     timeOfDay: {
@@ -27,15 +28,38 @@ export class PatternAnalysisService {
         this.prisma = new PrismaClient();
     }
 
-    async storeReading(reading: DexcomReading, sessionId: string): Promise<void> {
-        await this.prisma.bloodSugarReading.create({
-            data: {
-                sessionId,
-                value: reading.value,
-                trend: reading.trend,
-                timestamp: new Date(reading.timestamp),
-            },
-        });
+    async storeReading(reading: DexcomReading, sessionId: string, userId: string = 'default-user'): Promise<void> {
+        try {
+            // Try to create the reading with userId
+            try {
+                await this.prisma.bloodSugarReading.create({
+                    data: {
+                        sessionId,
+                        userId,
+                        value: reading.value,
+                        trend: reading.trend,
+                        timestamp: new Date(reading.timestamp),
+                    },
+                });
+            } catch (error: any) {
+                // If the error is about the userId column not existing, try without it
+                if (error.message && error.message.includes('column "userId" does not exist')) {
+                    console.log('The userId column does not exist in the BloodSugarReading table. Using simplified schema.');
+
+                    // Use a raw query to insert without userId
+                    await this.prisma.$executeRaw`
+                        INSERT INTO "BloodSugarReading" ("id", "sessionId", "value", "trend", "timestamp", "analyzed", "isEmbedded")
+                        VALUES (${crypto.randomUUID()}, ${sessionId}, ${reading.value}, ${reading.trend}, ${new Date(reading.timestamp)}, false, false)
+                    `;
+                } else {
+                    // Re-throw other errors
+                    throw error;
+                }
+            }
+        } catch (error) {
+            console.error('Error storing reading in database:', error);
+            // Don't throw the error, just log it and continue
+        }
     }
 
     async getTimeOfDayAnalysis(sessionId: string, days: number = 7): Promise<Record<string, number>> {

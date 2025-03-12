@@ -32,9 +32,9 @@ export default function Dashboard() {
                         </ClientOnly>
                     </div>
                     <div className="flex items-center space-x-6">
-                        <Link href="/ai-chat" className="flex items-center space-x-2 text-gray-600 hover:text-blue-600">
-                            <BsChatSquareText className="text-xl" />
-                            <span className="hidden md:inline">AI Chat</span>
+                        <Link href="/agent" className="flex items-center space-x-2 text-gray-600 hover:text-blue-600">
+                            <FiActivity className="text-xl" />
+                            <span className="hidden md:inline">AI Assistant</span>
                         </Link>
                         <button className="text-gray-600 hover:text-blue-600">
                             <BsBell className="text-xl" />
@@ -110,19 +110,19 @@ export default function Dashboard() {
                             </ClientOnly>
                         </div>
 
-                        {/* AI Chat Link */}
+                        {/* AI Assistant Link */}
                         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
                             <div className="p-6">
                                 <h2 className="text-xl font-semibold text-gray-800 mb-4">AI Assistant</h2>
                                 <p className="text-gray-600 mb-4">
-                                    Chat with your AI assistant to get personalized insights and answers about your diabetes management.
+                                    Chat with your AI assistant to get personalized insights, charts, and answers about your diabetes management.
                                 </p>
                                 <Link
-                                    href="/ai-chat"
+                                    href="/agent"
                                     className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors w-full"
                                 >
-                                    <BsChatSquareText size={18} />
-                                    <span>Open AI Chat Assistant</span>
+                                    <FiActivity size={18} />
+                                    <span>Open AI Assistant</span>
                                 </Link>
                             </div>
                         </div>

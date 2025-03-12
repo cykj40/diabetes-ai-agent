@@ -1420,4 +1420,70 @@ export class DexcomService {
             return null;
         }
     }
+
+    /**
+     * Get the current blood sugar reading for a specific user
+     * @param userId User ID for accessing Dexcom data
+     * @returns The most recent blood sugar reading or null if not available
+     */
+    async getCurrentReading(userId: string = 'default-user'): Promise<DexcomReading | null> {
+        try {
+            // Store the original userId
+            const originalUserId = this.userId;
+
+            // Set the userId for this request
+            this.userId = userId;
+
+            // Get the most recent reading
+            const reading = await this.getMostRecentReading();
+
+            // Restore the original userId
+            this.userId = originalUserId;
+
+            return reading;
+        } catch (error) {
+            console.error(`Error getting current reading for user ${userId}:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * Get blood sugar readings for a specific time range
+     * @param userId User ID for accessing Dexcom data
+     * @param startDate Start date for the readings
+     * @param endDate End date for the readings
+     * @returns Array of blood sugar readings
+     */
+    async getReadings(userId: string = 'default-user', startDate: Date, endDate: Date): Promise<DexcomReading[]> {
+        try {
+            // Store the original userId
+            const originalUserId = this.userId;
+
+            // Set the userId for this request
+            this.userId = userId;
+
+            // Calculate the number of readings to fetch based on the time range
+            // Assuming readings are taken every 5 minutes
+            const diffMs = endDate.getTime() - startDate.getTime();
+            const diffMinutes = Math.floor(diffMs / (1000 * 60));
+            const count = Math.ceil(diffMinutes / 5);
+
+            // Get the readings
+            const allReadings = await this.getLatestReadings(count);
+
+            // Filter readings to match the date range
+            const filteredReadings = allReadings.filter(reading => {
+                const readingDate = new Date(reading.timestamp);
+                return readingDate >= startDate && readingDate <= endDate;
+            });
+
+            // Restore the original userId
+            this.userId = originalUserId;
+
+            return filteredReadings;
+        } catch (error) {
+            console.error(`Error getting readings for user ${userId}:`, error);
+            return [];
+        }
+    }
 } 

@@ -786,16 +786,39 @@ export class DexcomService {
 
             console.log(`Date range: ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
-            // Get readings for the past week
-            const readings = await this.getLatestReadings(2016); // 7 days * 24 hours * 12 readings per hour (5-min intervals)
+            // First try to get readings from Share API
+            console.log('Attempting to get weekly readings from Dexcom Share API first...');
+            const shareReadings = await this.getShareReadings(2016); // 7 days * 24 hours * 12 readings per hour (5-min intervals)
 
-            // Filter readings to only include those from the past week
-            const weeklyReadings = readings.filter(reading => {
-                const readingDate = new Date(reading.timestamp);
-                return readingDate >= startDate && readingDate <= endDate;
-            });
+            let weeklyReadings: DexcomReading[] = [];
 
-            console.log(`Found ${weeklyReadings.length} readings in the past week`);
+            if (shareReadings && shareReadings.length > 0) {
+                console.log(`Successfully retrieved ${shareReadings.length} readings from Dexcom Share API`);
+
+                // Filter readings to only include those from the past week
+                weeklyReadings = shareReadings.filter(reading => {
+                    const readingDate = new Date(reading.timestamp);
+                    return readingDate >= startDate && readingDate <= endDate;
+                });
+
+                console.log(`Found ${weeklyReadings.length} Share API readings in the past week`);
+            }
+
+            // If no Share API readings, fall back to regular API
+            if (weeklyReadings.length === 0) {
+                console.log('Share API readings not available or insufficient, falling back to regular API...');
+
+                // Get readings for the past week
+                const readings = await this.getLatestReadings(2016); // 7 days * 24 hours * 12 readings per hour (5-min intervals)
+
+                // Filter readings to only include those from the past week
+                weeklyReadings = readings.filter(reading => {
+                    const readingDate = new Date(reading.timestamp);
+                    return readingDate >= startDate && readingDate <= endDate;
+                });
+
+                console.log(`Found ${weeklyReadings.length} readings in the past week from regular API`);
+            }
 
             if (weeklyReadings.length === 0) {
                 return {
@@ -1129,9 +1152,112 @@ export class DexcomService {
         };
     }
 
+    /**
+     * Get multiple readings from the Dexcom Share API
+     * @param count Number of readings to retrieve
+     * @returns Array of blood sugar readings
+     */
+    async getShareReadings(count: number = 48): Promise<DexcomReading[]> {
+        try {
+            // First, authenticate with the Share API
+            const sessionId = await this.getShareSessionId();
+            if (!sessionId) {
+                console.log('Failed to authenticate with Dexcom Share API');
+                return [];
+            }
+
+            console.log('Fetching readings from Dexcom Share API...');
+
+            // Fetch glucose readings
+            const response = await axios.post<DexcomShareReading[]>(
+                'https://share1.dexcom.com/ShareWebServices/Services/Publisher/ReadPublisherLatestGlucoseValues',
+                {
+                    sessionId: sessionId,
+                    minutes: 1440, // Last 24 hours
+                    maxCount: count
+                },
+                {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'User-Agent': 'Dexcom Share/3.0.2.11 CFNetwork/711.5.6 Darwin/14.0.0'
+                    }
+                }
+            );
+
+            if (!response.data || response.data.length === 0) {
+                console.log('No readings returned from Dexcom Share API');
+                return [];
+            }
+
+            console.log(`Retrieved ${response.data.length} readings from Dexcom Share API`);
+
+            // Convert Share readings to our standard format
+            return response.data.map(shareReading => {
+                // Convert the trend value to a string
+                let trendString = 'Flat';
+                switch (shareReading.Trend) {
+                    case 1:
+                        trendString = 'Rising Rapidly';
+                        break;
+                    case 2:
+                        trendString = 'Rising';
+                        break;
+                    case 3:
+                        trendString = 'Rising Slightly';
+                        break;
+                    case 4:
+                        trendString = 'Flat';
+                        break;
+                    case 5:
+                        trendString = 'Falling Slightly';
+                        break;
+                    case 6:
+                        trendString = 'Falling';
+                        break;
+                    case 7:
+                        trendString = 'Falling Rapidly';
+                        break;
+                    default:
+                        trendString = 'Flat';
+                }
+
+                // Convert the date format
+                // The DT format is like "/Date(1426290216000-0700)/"
+                const dateMatch = shareReading.DT.match(/\((\d+)[-+](\d{4})\)/);
+                let timestamp = new Date().toISOString();
+
+                if (dateMatch && dateMatch[1]) {
+                    const milliseconds = parseInt(dateMatch[1], 10);
+                    timestamp = new Date(milliseconds).toISOString();
+                }
+
+                return {
+                    value: shareReading.Value,
+                    trend: trendString,
+                    timestamp: timestamp,
+                    source: 'share' // Mark this as coming from the Share API
+                };
+            });
+        } catch (error) {
+            console.error('Error fetching from Dexcom Share API:', error);
+            return [];
+        }
+    }
+
     async getLatestReadings(count: number = 48): Promise<DexcomReading[]> {
         try {
             console.log('Starting getLatestReadings...');
+
+            // First try to get readings from Share API
+            console.log('Attempting to get readings from Dexcom Share API first...');
+            const shareReadings = await this.getShareReadings(count);
+
+            if (shareReadings && shareReadings.length > 0) {
+                console.log(`Successfully retrieved ${shareReadings.length} readings from Dexcom Share API`);
+                return shareReadings;
+            }
+
+            console.log('Share API readings not available, falling back to regular API...');
 
             const hasValidToken = await this.ensureValidToken();
             console.log('Token status after ensureValidToken:', hasValidToken ? 'Valid' : 'Invalid/Missing');
@@ -1428,13 +1554,24 @@ export class DexcomService {
      */
     async getCurrentReading(userId: string = 'default-user'): Promise<DexcomReading | null> {
         try {
+            // First try to get reading from Share API
+            console.log('Attempting to get reading from Dexcom Share API first...');
+            const shareReading = await this.getLatestShareReading();
+
+            if (shareReading) {
+                console.log('Successfully retrieved reading from Dexcom Share API');
+                return shareReading;
+            }
+
+            console.log('Share API reading not available, falling back to regular API...');
+
             // Store the original userId
             const originalUserId = this.userId;
 
             // Set the userId for this request
             this.userId = userId;
 
-            // Get the most recent reading
+            // Get the most recent reading from regular API
             const reading = await this.getMostRecentReading();
 
             // Restore the original userId

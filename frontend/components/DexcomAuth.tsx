@@ -1,5 +1,7 @@
+'use client';
+
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/router';
+import { useRouter, useSearchParams } from 'next/navigation';
 
 interface DexcomAuthProps {
     onAuthSuccess?: () => void;
@@ -9,15 +11,17 @@ export default function DexcomAuth({ onAuthSuccess }: DexcomAuthProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const router = useRouter();
+    const searchParams = useSearchParams();
 
     // Handle the OAuth callback
     useEffect(() => {
-        const { code, state } = router.query;
+        const code = searchParams.get('code');
+        const state = searchParams.get('state');
 
         if (code && state) {
-            handleAuthCallback(code as string, state as string);
+            handleAuthCallback(code, state);
         }
-    }, [router.query]);
+    }, [searchParams]);
 
     const handleAuthCallback = async (code: string, state: string) => {
         try {

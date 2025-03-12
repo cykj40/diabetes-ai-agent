@@ -2,6 +2,7 @@ import { DynamicStructuredTool } from "@langchain/core/tools";
 import { getCurrentReadingTool } from './current-reading';
 import { getRecentReadingsTool } from './recent-readings';
 import { getPatternsTool } from './patterns';
+import { getWeeklyBloodSugarDataTool } from './weekly-data';
 
 /**
  * Get all Dexcom-related tools
@@ -13,5 +14,6 @@ export function dexcomTools(userId: string): DynamicStructuredTool[] {
         getCurrentReadingTool(userId),
         getRecentReadingsTool(userId),
         getPatternsTool(userId),
+        getWeeklyBloodSugarDataTool(userId),
     ];
 } 

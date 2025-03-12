@@ -1,5 +1,6 @@
+'use client';
+
 import React, { useState, useRef, useEffect } from 'react';
-import { useUser } from '@clerk/nextjs';
 import { Send, RefreshCw } from 'lucide-react';
 
 interface Message {
@@ -10,12 +11,11 @@ interface Message {
 }
 
 export default function AgentChat() {
-    const { user } = useUser();
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const [sessionId, setSessionId] = useState('default');
+    const sessionId = 'default';
 
     // Load chat history on component mount
     useEffect(() => {

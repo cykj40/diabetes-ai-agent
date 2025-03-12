@@ -2,6 +2,7 @@ import { DynamicStructuredTool } from "@langchain/core/tools";
 import { dexcomTools } from './dexcom';
 import { chartTools } from './charts';
 import { nutritionTools } from './nutrition';
+import { insulinTools } from './insulin';
 
 /**
  * Get all available tools for the agent
@@ -13,5 +14,6 @@ export function getAllTools(userId: string = 'default-user'): DynamicStructuredT
         ...dexcomTools(userId),
         ...chartTools(userId),
         ...nutritionTools(userId),
+        ...insulinTools(userId),
     ];
 } 

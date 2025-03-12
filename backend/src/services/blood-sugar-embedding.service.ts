@@ -154,15 +154,20 @@ export class BloodSugarEmbeddingService {
                         });
                     } else {
                         // Create new reading
+                        const createData: any = {
+                            sessionId,
+                            value: reading.value,
+                            trend: reading.trend,
+                            timestamp: timestamp
+                        };
+
+                        // Only add userId if it exists and column exists
+                        if (hasUserIdColumn && userId) {
+                            createData.userId = userId;
+                        }
+
                         await this.prisma.bloodSugarReading.create({
-                            data: {
-                                sessionId,
-                                value: reading.value,
-                                trend: reading.trend,
-                                timestamp: timestamp,
-                                // Only include userId if the column exists
-                                ...(hasUserIdColumn ? { userId } : {})
-                            }
+                            data: createData
                         });
                     }
                 } catch (error: any) {

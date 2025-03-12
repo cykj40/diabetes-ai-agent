@@ -1,3 +1,5 @@
+'use client';
+
 import { useEffect, useState } from 'react';
 import BloodSugarCharts from './BloodSugarCharts';
 import { FiRefreshCw } from 'react-icons/fi';

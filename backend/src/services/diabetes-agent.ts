@@ -7,6 +7,7 @@ import { DexcomService } from './dexcom.service';
 import { AIService } from './ai.service';
 import { PersistentMessageHistory } from './message-store';
 import { PatternAnalysisService } from './pattern-analysis.service';
+import { UserProfileService } from './user-profile.service';
 import { AgentToolsService } from './agent-tools.service';
 import { RunnableWithMessageHistory, Runnable } from "@langchain/core/runnables";
 import { BaseMessage, HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
@@ -28,6 +29,7 @@ export class DiabetesAgent {
     private readonly dexcomService: DexcomService;
     private readonly aiService: AIService;
     private readonly patternAnalysis: PatternAnalysisService;
+    private readonly userProfileService: UserProfileService;
     private readonly agentToolsService: AgentToolsService;
     private agent: AgentExecutor | null = null;
     private agentWithMemory: Runnable<AgentInput, ChainValues> | null = null;
@@ -44,6 +46,7 @@ export class DiabetesAgent {
         this.dexcomService = new DexcomService();
         this.aiService = new AIService();
         this.patternAnalysis = new PatternAnalysisService();
+        this.userProfileService = new UserProfileService();
         this.agentToolsService = new AgentToolsService();
         this.memory = new BufferMemory({
             returnMessages: true,
@@ -58,21 +61,29 @@ export class DiabetesAgent {
         // Get all tools from the AgentToolsService
         const tools = this.agentToolsService.getTools();
 
+        // Get the user profile for the default user
+        const userProfilePrompt = this.userProfileService.getProfilePrompt('default-user');
+
         // Create the agent with a more specific system prompt
-        const systemPrompt = `You are a diabetes management assistant that helps users understand their blood sugar data.
+        const systemPrompt = `You are a diabetes management assistant that helps users understand their blood sugar data and manage their diabetes effectively.
+
+${userProfilePrompt}
 
 IMPORTANT INSTRUCTIONS:
 1. When the user asks about their current blood sugar, use the get_current_blood_sugar tool.
 2. When the user asks about recent readings, use the get_recent_blood_sugar_readings tool.
-3. When the user asks about patterns or trends, use the analyze_blood_sugar_patterns tool.
-4. When the user wants to visualize their data, use the generate_blood_sugar_line_chart or generate_pie_chart tools.
-5. When the user asks about food or nutrition, use the get_food_nutritional_info tool.
-6. When the user asks for meal suggestions, use the suggest_meal tool.
-7. Be concise but informative in your responses.
-8. Always interpret the blood sugar values in mg/dL.
-9. Normal range for blood sugar is typically 70-180 mg/dL.
-10. For current readings, mention the current value, trend, and time.
-11. For pattern analysis, highlight notable trends, potential issues, and improvements.
+3. When the user asks about their past week's blood sugars or weekly data, use the get_weekly_blood_sugar_data tool.
+4. When the user asks about patterns or trends, use the analyze_blood_sugar_patterns tool.
+5. When the user wants to visualize their data, use the generate_blood_sugar_line_chart or generate_pie_chart tools.
+6. When the user asks about food or nutrition, use the get_food_nutritional_info tool.
+7. When the user asks for meal suggestions, use the suggest_meal tool.
+8. When calculating insulin doses, use the user's specific insulin-to-carb ratio and correction factor.
+9. Always consider insulin on board when suggesting correction doses.
+10. Be concise but informative in your responses.
+11. Always interpret the blood sugar values in mg/dL.
+12. For current readings, mention the current value, trend, and time.
+13. For pattern analysis, highlight notable trends, potential issues, and improvements.
+14. When providing advice, reference reputable sources like Joslin Clinic, Mayo Clinic, Harvard Health, and Stanford Health.
 
 Remember to be supportive and helpful, focusing on providing actionable insights about the user's diabetes management.`;
 

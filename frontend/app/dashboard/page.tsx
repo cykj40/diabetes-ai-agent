@@ -9,7 +9,6 @@ import CurrentGlucoseReading from "../../components/CurrentGlucoseReading";
 import DailyAverageReading from "../../components/DailyAverageReading";
 import TimeInRangeReading from "../../components/TimeInRangeReading";
 import WeeklyPatterns from "../../components/WeeklyPatterns";
-import DexcomAlerts from "../../components/DexcomAlerts";
 import { BsGraphUp, BsBell, BsChatSquareText } from 'react-icons/bs';
 import { FiSettings, FiActivity } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
@@ -101,13 +100,6 @@ export default function Dashboard() {
                                     </p>
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Dexcom Alerts */}
-                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-                            <ClientOnly fallback={<div className="h-48 bg-gray-100 animate-pulse p-6"></div>}>
-                                <DexcomAlerts />
-                            </ClientOnly>
                         </div>
 
                         {/* AI Assistant Link */}

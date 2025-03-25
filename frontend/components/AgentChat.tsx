@@ -1,13 +1,22 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, ReactNode } from 'react';
 import { Send, RefreshCw } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { motion, AnimatePresence } from 'framer-motion';
+import type { Components } from 'react-markdown';
+import AIChartRenderer from './AIChartRenderer';
 
 interface Message {
     id: string;
     text: string;
     sender: 'user' | 'ai';
     timestamp: string;
+    isTyping?: boolean;
+}
+
+interface MarkdownComponentProps {
+    children: ReactNode;
 }
 
 export default function AgentChat() {
@@ -32,7 +41,7 @@ export default function AgentChat() {
             const response = await fetch(`/api/ai/chat-history/${sessionId}`);
             const data = await response.json();
             if (data.messages) {
-                setMessages(data.messages);
+                setMessages(data.messages.map((msg: Message) => ({ ...msg, isTyping: false })));
             }
         } catch (error) {
             console.error('Failed to fetch chat history:', error);
@@ -53,11 +62,53 @@ export default function AgentChat() {
         }
     };
 
+    const simulateTyping = async (text: string): Promise<void> => {
+        return new Promise((resolve) => {
+            const tempId = Date.now().toString() + '-ai';
+            const aiMessage: Message = {
+                id: tempId,
+                text: '',
+                sender: 'ai',
+                timestamp: new Date().toLocaleTimeString(),
+                isTyping: true
+            };
+
+            setMessages(prev => [...prev, aiMessage]);
+
+            let currentText = '';
+            const words = text.split(' ');
+
+            const typeWord = (index: number) => {
+                if (index < words.length) {
+                    currentText += (index > 0 ? ' ' : '') + words[index];
+                    setMessages(prev =>
+                        prev.map(msg =>
+                            msg.id === tempId
+                                ? { ...msg, text: currentText }
+                                : msg
+                        )
+                    );
+                    setTimeout(() => typeWord(index + 1), 50); // Adjust speed here
+                } else {
+                    setMessages(prev =>
+                        prev.map(msg =>
+                            msg.id === tempId
+                                ? { ...msg, isTyping: false }
+                                : msg
+                        )
+                    );
+                    resolve();
+                }
+            };
+
+            typeWord(0);
+        });
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || isLoading) return;
 
-        // Add user message to chat
         const userMessage: Message = {
             id: Date.now().toString(),
             text: input,
@@ -69,7 +120,6 @@ export default function AgentChat() {
         setIsLoading(true);
 
         try {
-            // Call the agent API
             const response = await fetch('/api/ai/agent', {
                 method: 'POST',
                 headers: {
@@ -86,53 +136,54 @@ export default function AgentChat() {
             }
 
             const data = await response.json();
+            await simulateTyping(data.message);
 
-            // Add AI response to chat
-            const aiMessage: Message = {
-                id: Date.now().toString() + '-ai',
-                text: data.message,
-                sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-            };
-            setMessages((prev) => [...prev, aiMessage]);
         } catch (error) {
             console.error('Error sending message:', error);
-            // Add error message
-            const errorMessage: Message = {
-                id: Date.now().toString() + '-error',
-                text: 'Sorry, there was an error processing your request. Please try again.',
-                sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-            };
-            setMessages((prev) => [...prev, errorMessage]);
+            await simulateTyping('Sorry, there was an error processing your request. Please try again.');
         } finally {
             setIsLoading(false);
         }
     };
 
-    // Function to render message content with support for images
-    const renderMessageContent = (text: string) => {
-        // Check if the message contains an image URL from DALL-E
-        const imageUrlMatch = text.match(/(https:\/\/[^\s]+\.(jpg|jpeg|png|gif))/i);
+    // Function to render message content with support for images and markdown
+    const renderMessageContent = (text: string, isTyping: boolean = false) => {
+        // Extract chart data if present
+        const chartMatch = text.match(/\{[\s\S]*"type":\s*["'](line|pie)["'][\s\S]*\}/);
+        let chartData = null;
+        let cleanedText = text;
 
-        if (imageUrlMatch) {
-            const imageUrl = imageUrlMatch[0];
-            const textWithoutImage = text.replace(imageUrl, '');
-
-            return (
-                <>
-                    <p>{textWithoutImage}</p>
-                    <img
-                        src={imageUrl}
-                        alt="Generated chart"
-                        className="mt-2 rounded-lg max-w-full h-auto"
-                        style={{ maxHeight: '400px' }}
-                    />
-                </>
-            );
+        if (chartMatch) {
+            try {
+                chartData = chartMatch[0];
+                // Remove the chart data from the text
+                cleanedText = text.replace(chartMatch[0], '');
+            } catch (e) {
+                console.error('Failed to parse chart data:', e);
+            }
         }
 
-        return <p>{text}</p>;
+        const components: Components = {
+            p: (props) => <p className={`mb-2 ${isTyping ? 'typing' : ''} leading-relaxed`} {...props} />,
+            strong: (props) => <strong className="font-bold text-inherit" {...props} />,
+            ul: (props) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
+            ol: (props) => <ol className="list-decimal ml-4 mb-2 space-y-1" {...props} />,
+            li: (props) => <li className="mb-1" {...props} />,
+            code: (props) => <code className="bg-gray-800 text-gray-200 rounded px-1 py-0.5 text-sm" {...props} />
+        };
+
+        return (
+            <div className={`space-y-4 prose prose-sm sm:prose-base ${isTyping ? 'typing-container' : ''}`}>
+                <ReactMarkdown components={components}>
+                    {cleanedText}
+                </ReactMarkdown>
+                {chartData && (
+                    <div className="mt-4 bg-white rounded-lg shadow-sm p-4">
+                        <AIChartRenderer chartData={chartData} />
+                    </div>
+                )}
+            </div>
+        );
     };
 
     return (
@@ -152,34 +203,38 @@ export default function AgentChat() {
 
             {/* Messages container */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                {messages.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-gray-500">
-                        <p>Start a conversation with your AI Assistant</p>
-                    </div>
-                ) : (
-                    messages.map((message) => (
-                        <div
-                            key={message.id}
-                            className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'
-                                }`}
-                        >
-                            <div
-                                className={`max-w-[80%] rounded-lg p-3 ${message.sender === 'user'
-                                    ? 'bg-blue-500 text-white'
-                                    : 'bg-gray-100 text-gray-800'
-                                    }`}
+                <AnimatePresence>
+                    {messages.length === 0 ? (
+                        <div className="flex items-center justify-center h-full text-gray-500">
+                            <p>Start a conversation with your AI Assistant</p>
+                        </div>
+                    ) : (
+                        messages.map((message) => (
+                            <motion.div
+                                key={message.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                exit={{ opacity: 0 }}
+                                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
-                                {renderMessageContent(message.text)}
                                 <div
-                                    className={`text-xs mt-1 ${message.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
+                                    className={`max-w-[80%] rounded-lg p-4 ${message.sender === 'user'
+                                        ? 'bg-blue-500 text-white prose-strong:text-white prose-headings:text-white'
+                                        : 'bg-gray-100 text-gray-800 prose-strong:text-gray-900 prose-headings:text-gray-900'
                                         }`}
                                 >
-                                    {message.timestamp}
+                                    {renderMessageContent(message.text, message.isTyping)}
+                                    <div
+                                        className={`text-xs mt-2 ${message.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
+                                            }`}
+                                    >
+                                        {message.timestamp}
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
-                    ))
-                )}
+                            </motion.div>
+                        ))
+                    )}
+                </AnimatePresence>
                 <div ref={messagesEndRef} />
             </div>
 
@@ -196,7 +251,7 @@ export default function AgentChat() {
                     />
                     <button
                         type="submit"
-                        className="bg-blue-500 text-white p-2 rounded-r-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="bg-blue-500 text-white p-2 rounded-r-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={isLoading}
                     >
                         {isLoading ? (

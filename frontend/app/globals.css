@@ -19,3 +19,82 @@ body {
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Typing animation */
+.typing::after {
+  content: '▋';
+  display: inline-block;
+  animation: cursor 1.1s infinite steps(2, jump-none);
+  margin-left: 2px;
+  opacity: 0.7;
+  vertical-align: baseline;
+}
+
+@keyframes cursor {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* Prose styles for markdown */
+.prose {
+  max-width: none !important;
+}
+
+.prose p {
+  margin: 0.75em 0;
+  line-height: 1.6;
+}
+
+.prose strong {
+  font-weight: 600;
+}
+
+.prose ul, .prose ol {
+  margin: 0.75em 0;
+  padding-left: 1.2em;
+}
+
+.prose li {
+  margin: 0.5em 0;
+  padding-left: 0.3em;
+}
+
+.prose code {
+  font-size: 0.875em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+/* Message animations */
+.message-enter {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.message-enter-active {
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+
+.message-exit {
+  opacity: 1;
+}
+
+.message-exit-active {
+  opacity: 0;
+  transition: opacity 150ms ease-in;
+}
+
+/* Dark mode adjustments */
+.dark .prose {
+  color: var(--foreground);
+}
+
+.dark .prose strong {
+  color: #fff;
+}
+
+.dark .prose code {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #e5e5e5;
+}

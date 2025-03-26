@@ -23,14 +23,15 @@ export function trackInsulinOnBoardTool(userId: string): DynamicStructuredTool {
 
     return new DynamicStructuredTool({
         name: "track_insulin_on_board",
-        description: "Track insulin on board (IOB) based on recent insulin doses",
+        description: "Track insulin on board (IOB) based on recent Novolog doses. The user takes Novolog as short-acting insulin which remains active for 4 hours. Use this tool to check how much insulin is still active in the body before calculating new doses.",
         schema: z.object({
             recordDose: z.boolean().optional().describe("Whether to record a new insulin dose"),
             units: z.number().optional().describe("Units of insulin for the new dose"),
-            insulinType: z.string().optional().describe("Type of insulin (e.g., Novolog, Humalog)"),
+            insulinType: z.string().optional().describe("Type of insulin (default is Novolog)"),
             description: z.string().optional().describe("Description of the dose (e.g., 'breakfast', 'correction')"),
+            timeAgo: z.number().optional().describe("Hours ago the dose was taken (default is now)"),
         }) as any, // Type assertion to avoid TypeScript errors
-        func: async ({ recordDose = false, units, insulinType, description }) => {
+        func: async ({ recordDose = false, units, insulinType, description, timeAgo = 0 }) => {
             try {
                 // Get user profile
                 const profile = await userProfileService.getProfile(userId);
@@ -45,10 +46,13 @@ export function trackInsulinOnBoardTool(userId: string): DynamicStructuredTool {
                         insulinType = profile.bolusInsulinType; // Default to user's bolus insulin type
                     }
 
+                    // Calculate timestamp based on timeAgo
+                    const timestamp = new Date(Date.now() - timeAgo * 60 * 60 * 1000);
+
                     // In a real implementation, this would store to a database
                     // For now, we'll just log it
                     console.log(`Recording insulin dose: ${units} units of ${insulinType} for user ${userId}`);
-                    console.log(`Description: ${description || 'No description'}`);
+                    console.log(`Description: ${description || 'No description'}, Time: ${timestamp.toLocaleString()}`);
 
                     // Mock database storage
                     // In a real implementation, this would use Prisma to store to the database
@@ -57,7 +61,7 @@ export function trackInsulinOnBoardTool(userId: string): DynamicStructuredTool {
                         userId,
                         units,
                         insulinType,
-                        timestamp: new Date(),
+                        timestamp,
                         description
                     };
 

@@ -6,12 +6,12 @@ export async function GET(
     { params }: { params: { sessionId: string } }
 ) {
     try {
-        const { userId } = getAuth(request);
+        const { userId } = await getAuth(request);
         if (!userId) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const sessionId = params.sessionId;
+        const sessionId = await params.sessionId;
         if (!sessionId) {
             return NextResponse.json({ error: 'Session ID is required' }, { status: 400 });
         }

@@ -40,7 +40,7 @@ export class UserProfileService {
             basalEveningMax: 14,
             basalInsulinType: 'Basaglar',
             bolusInsulinType: 'Novolog',
-            customNotes: 'User prefers to maintain tight blood sugar control. Interested in fitness, nutrition, and optimizing insulin doses.'
+            customNotes: 'User takes Novolog as short acting insulin with a 1:4.5 insulin-to-carb ratio. Correction factor is 1 unit lowers blood sugar by 25 mg/dl. Short acting insulin lasts 4 hours. Long acting insulin is taken twice daily - morning dose (20-24 units at 6:00 AM) and evening dose (10-14 units at 6:00 PM).'
         });
     }
 

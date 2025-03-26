@@ -19,17 +19,20 @@ interface MarkdownComponentProps {
     children: ReactNode;
 }
 
-export default function AgentChat() {
+interface AgentChatProps {
+    sessionId?: string;
+}
+
+export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const sessionId = 'default';
 
     // Load chat history on component mount
     useEffect(() => {
         fetchChatHistory();
-    }, []);
+    }, [sessionId]);
 
     // Scroll to bottom of messages
     useEffect(() => {
@@ -187,26 +190,16 @@ export default function AgentChat() {
     };
 
     return (
-        <div className="flex flex-col h-[70vh] bg-white rounded-lg shadow-md">
-            {/* Chat header */}
-            <div className="flex justify-between items-center p-4 border-b">
-                <h2 className="text-xl font-semibold">AI Assistant</h2>
-                <button
-                    onClick={clearChatHistory}
-                    className="flex items-center text-sm text-gray-600 hover:text-gray-900"
-                    disabled={isLoading}
-                >
-                    <RefreshCw size={16} className="mr-1" />
-                    Clear Chat
-                </button>
-            </div>
-
+        <div className="flex flex-col h-full bg-white rounded-lg shadow-sm">
             {/* Messages container */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <AnimatePresence>
                     {messages.length === 0 ? (
                         <div className="flex items-center justify-center h-full text-gray-500">
-                            <p>Start a conversation with your AI Assistant</p>
+                            <div className="text-center">
+                                <p className="mb-2 text-lg font-medium">Start a conversation</p>
+                                <p className="text-sm">Ask about your blood sugar, request charts, or get insights.</p>
+                            </div>
                         </div>
                     ) : (
                         messages.map((message) => (
@@ -218,14 +211,14 @@ export default function AgentChat() {
                                 className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
                             >
                                 <div
-                                    className={`max-w-[80%] rounded-lg p-4 ${message.sender === 'user'
-                                        ? 'bg-blue-500 text-white prose-strong:text-white prose-headings:text-white'
+                                    className={`max-w-[90%] rounded-lg p-4 ${message.sender === 'user'
+                                        ? 'bg-blue-600 text-white prose-strong:text-white prose-headings:text-white'
                                         : 'bg-gray-100 text-gray-800 prose-strong:text-gray-900 prose-headings:text-gray-900'
                                         }`}
                                 >
                                     {renderMessageContent(message.text, message.isTyping)}
                                     <div
-                                        className={`text-xs mt-2 ${message.sender === 'user' ? 'text-blue-100' : 'text-gray-500'
+                                        className={`text-xs mt-2 ${message.sender === 'user' ? 'text-blue-200' : 'text-gray-500'
                                             }`}
                                     >
                                         {message.timestamp}
@@ -239,29 +232,42 @@ export default function AgentChat() {
             </div>
 
             {/* Input form */}
-            <form onSubmit={handleSubmit} className="border-t p-4">
-                <div className="flex items-center">
+            <div className="border-t p-3">
+                <form onSubmit={handleSubmit} className="relative">
                     <input
                         type="text"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         placeholder="Ask about your blood sugar, request a chart, or get insights..."
-                        className="flex-1 border rounded-l-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        className="w-full rounded-lg border border-gray-300 pr-12 py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         disabled={isLoading}
                     />
                     <button
                         type="submit"
-                        className="bg-blue-500 text-white p-2 rounded-r-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={isLoading}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-md bg-transparent text-gray-500 hover:bg-gray-100 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={isLoading || !input.trim()}
                     >
                         {isLoading ? (
-                            <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin"></div>
                         ) : (
-                            <Send size={20} />
+                            <Send size={18} className="text-blue-600" />
                         )}
                     </button>
-                </div>
-            </form>
+
+                    {/* Clear chat button - moved to be more accessible */}
+                    <div className="flex justify-end mt-2">
+                        <button
+                            onClick={clearChatHistory}
+                            className="flex items-center text-xs text-gray-500 hover:text-gray-700"
+                            disabled={isLoading || messages.length === 0}
+                            type="button"
+                        >
+                            <RefreshCw size={12} className="mr-1" />
+                            Clear chat
+                        </button>
+                    </div>
+                </form>
+            </div>
         </div>
     );
 } 

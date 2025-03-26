@@ -5,6 +5,10 @@ import { DexcomService } from '../services/dexcom.service';
 import { DiabetesAgent } from '../services/diabetes-agent';
 import { DiabetesAgentService } from '../services/agent.service';
 import { formatDexcomDate, generateMockReadings, debouncedProcessReadings } from '../server';
+import { PrismaClient } from '@prisma/client';
+
+// Create a Prisma client instance
+const prisma = new PrismaClient();
 
 // Define route parameter types
 interface ChatParams {
@@ -267,8 +271,8 @@ export default async function aiRoutes(fastify: FastifyInstance) {
         }
     });
 
-    // Get chat history endpoint
-    fastify.get<{ Params: ChatParams }>('/chat-history/:sessionId?', async (request, reply) => {
+    // Endpoint to get all chat sessions for a user
+    fastify.get('/chat-sessions', async (request, reply) => {
         try {
             // Extract user ID from authorization header
             const authHeader = request.headers.authorization;
@@ -278,27 +282,36 @@ export default async function aiRoutes(fastify: FastifyInstance) {
                 userId = authHeader.substring(7); // Remove 'Bearer ' prefix
             }
 
-            const sessionId = request.params.sessionId || 'default';
-            const fullSessionId = `${userId}-${sessionId}`;
+            // Get all sessions for this user by querying distinct sessionIds
+            const sessionIds = await prisma.$queryRaw`
+                SELECT DISTINCT 
+                    "sessionId" as id,
+                    (
+                        SELECT content 
+                        FROM "ChatMessage" 
+                        WHERE "sessionId" = cm."sessionId" AND type = 'human' 
+                        ORDER BY timestamp ASC 
+                        LIMIT 1
+                    ) as title,
+                    MAX(timestamp) as timestamp
+                FROM "ChatMessage" cm
+                WHERE "sessionId" LIKE ${`${userId}-%`}
+                GROUP BY "sessionId"
+                ORDER BY MAX(timestamp) DESC
+            `;
 
-            const chatHistory = await diabetesAgent.getChatHistory(fullSessionId);
-
-            const formattedHistory = chatHistory.map(msg => ({
-                id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                sender: msg._getType() === 'human' ? 'user' : 'ai',
-                timestamp: new Date().toLocaleTimeString()
-            }));
-
-            return { messages: formattedHistory };
+            return sessionIds;
         } catch (error) {
-            console.error('Error fetching chat history:', error);
-            return reply.code(500).send({ error: 'Failed to fetch chat history' });
+            console.error('Error fetching chat sessions:', error);
+            return reply.code(500).send({
+                error: 'Failed to fetch chat sessions',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
         }
     });
 
-    // Clear chat history endpoint
-    fastify.delete<{ Params: ChatParams }>('/chat-history/:sessionId?', async (request, reply) => {
+    // Endpoint to get chat history for a session
+    fastify.get<{ Params: ChatParams }>('/chat-history/:sessionId', async (request, reply) => {
         try {
             // Extract user ID from authorization header
             const authHeader = request.headers.authorization;
@@ -308,15 +321,59 @@ export default async function aiRoutes(fastify: FastifyInstance) {
                 userId = authHeader.substring(7); // Remove 'Bearer ' prefix
             }
 
-            const sessionId = request.params.sessionId || 'default';
+            const { sessionId = 'default' } = request.params;
             const fullSessionId = `${userId}-${sessionId}`;
 
-            await diabetesAgent.clearChatHistory(fullSessionId);
+            // Get the chat history from the database
+            const messages = await prisma.chatMessage.findMany({
+                where: { sessionId: fullSessionId },
+                orderBy: { timestamp: 'asc' },
+            });
+
+            // Format messages for the frontend
+            const formattedMessages = messages.map((msg) => ({
+                id: msg.id,
+                text: msg.content,
+                sender: msg.type === 'human' ? 'user' : 'ai',
+                timestamp: new Date(msg.timestamp).toLocaleTimeString()
+            }));
+
+            return { messages: formattedMessages };
+        } catch (error) {
+            console.error('Error fetching chat history:', error);
+            return reply.code(500).send({
+                error: 'Failed to fetch chat history',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
+    // Endpoint to delete chat history for a session
+    fastify.delete<{ Params: ChatParams }>('/chat-history/:sessionId', async (request, reply) => {
+        try {
+            // Extract user ID from authorization header
+            const authHeader = request.headers.authorization;
+            let userId = 'default-user';
+
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            }
+
+            const { sessionId = 'default' } = request.params;
+            const fullSessionId = `${userId}-${sessionId}`;
+
+            // Delete all messages for this session
+            await prisma.chatMessage.deleteMany({
+                where: { sessionId: fullSessionId },
+            });
 
             return { success: true, message: 'Chat history cleared successfully' };
         } catch (error) {
             console.error('Error clearing chat history:', error);
-            return reply.code(500).send({ error: 'Failed to clear chat history' });
+            return reply.code(500).send({
+                error: 'Failed to clear chat history',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
         }
     });
 } 

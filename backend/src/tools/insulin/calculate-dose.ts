@@ -14,14 +14,15 @@ export function calculateInsulinDoseTool(userId: string): DynamicStructuredTool 
 
     return new DynamicStructuredTool({
         name: "calculate_insulin_dose",
-        description: "Calculate insulin dose based on carbs, current blood sugar, and target blood sugar",
+        description: "Calculate insulin dose based on carbs, current blood sugar, and target blood sugar. The user takes Novolog as short-acting insulin with a 1:4.5 insulin-to-carb ratio and a correction factor of 1 unit per 25 mg/dL. Novolog remains active for 4 hours. Always use this tool when calculating insulin doses for meals or high blood sugar corrections. If the user hasn't provided all necessary information (like carb count), ask follow-up questions first before using this tool.",
         schema: z.object({
             carbsInGrams: z.number().describe("Amount of carbohydrates in grams"),
             currentBloodSugar: z.number().optional().describe("Current blood sugar in mg/dL (if not provided, will be fetched from Dexcom)"),
             targetBloodSugar: z.number().optional().describe("Target blood sugar in mg/dL (if not provided, will use the middle of the target range)"),
             insulinOnBoard: z.number().optional().describe("Insulin on board in units (if known)"),
+            mealType: z.string().optional().describe("Type of meal (breakfast, lunch, dinner, snack) - helpful for context"),
         }) as any, // Type assertion to avoid TypeScript errors
-        func: async ({ carbsInGrams, currentBloodSugar, targetBloodSugar, insulinOnBoard = 0 }) => {
+        func: async ({ carbsInGrams, currentBloodSugar, targetBloodSugar, insulinOnBoard = 0, mealType = '' }) => {
             try {
                 // Get user profile
                 const profile = await userProfileService.getProfile(userId);
@@ -61,6 +62,9 @@ export function calculateInsulinDoseTool(userId: string): DynamicStructuredTool 
 
                 // Format the response
                 let response = `Insulin Dose Calculation:\n\n`;
+                if (mealType) {
+                    response += `Meal: ${mealType}\n`;
+                }
                 response += `- Carbs: ${carbsInGrams}g ÷ ${profile.insulinToCarbRatio} = ${carbDose.toFixed(1)} units\n`;
 
                 if (bloodSugarDifference > 0) {

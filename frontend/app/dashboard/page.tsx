@@ -9,7 +9,7 @@ import CurrentGlucoseReading from "../../components/CurrentGlucoseReading";
 import DailyAverageReading from "../../components/DailyAverageReading";
 import TimeInRangeReading from "../../components/TimeInRangeReading";
 import WeeklyPatterns from "../../components/WeeklyPatterns";
-import { BsGraphUp, BsBell, BsChatSquareText } from 'react-icons/bs';
+import { BsBell } from 'react-icons/bs';
 import { FiSettings, FiActivity } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
 import Link from 'next/link';

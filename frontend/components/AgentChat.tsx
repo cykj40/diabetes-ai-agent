@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useRef, useEffect, ReactNode } from 'react';
-import { Send, RefreshCw } from 'lucide-react';
+import { Send, RefreshCw, ArrowLeft, Save } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Components } from 'react-markdown';
 import AIChartRenderer from './AIChartRenderer';
+import { useRouter } from 'next/navigation';
 
 interface Message {
     id: string;
@@ -27,11 +28,17 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+    const [title, setTitle] = useState('Diabetes AI Assistant');
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const router = useRouter();
 
-    // Load chat history on component mount
+    // Load chat history and title on component mount
     useEffect(() => {
         fetchChatHistory();
+        if (sessionId !== 'default') {
+            fetchSessionTitle();
+        }
     }, [sessionId]);
 
     // Scroll to bottom of messages
@@ -48,6 +55,21 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
             }
         } catch (error) {
             console.error('Failed to fetch chat history:', error);
+        }
+    };
+
+    const fetchSessionTitle = async () => {
+        try {
+            const response = await fetch('/api/ai/chat-sessions');
+            if (response.ok) {
+                const sessions = await response.json();
+                const currentSession = sessions.find((s: any) => s.id === sessionId);
+                if (currentSession && currentSession.title) {
+                    setTitle(currentSession.title.substring(0, 30) + (currentSession.title.length > 30 ? '...' : ''));
+                }
+            }
+        } catch (error) {
+            console.error('Failed to fetch session title:', error);
         }
     };
 
@@ -149,6 +171,23 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         }
     };
 
+    const handleSaveChat = async () => {
+        if (messages.length === 0) return;
+
+        setIsSaving(true);
+        try {
+            // The chat is already being saved automatically on each message
+            // This is just a visual confirmation for the user
+            await new Promise(resolve => setTimeout(resolve, 500));
+            alert('Chat history saved successfully');
+        } catch (error) {
+            console.error('Error saving chat:', error);
+            alert('Failed to save chat history');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     // Function to render message content with support for images and markdown
     const renderMessageContent = (text: string, isTyping: boolean = false) => {
         // Extract chart data if present
@@ -191,6 +230,37 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
 
     return (
         <div className="flex flex-col h-full bg-white rounded-lg shadow-sm">
+            {/* Navigation and action buttons */}
+            <div className="flex flex-col p-3 border-b">
+                <div className="flex items-center justify-between mb-2">
+                    <button
+                        onClick={() => router.push('/dashboard')}
+                        className="flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                    >
+                        <ArrowLeft size={16} className="mr-1" />
+                        Back to Dashboard
+                    </button>
+                    <button
+                        onClick={handleSaveChat}
+                        disabled={isSaving || messages.length === 0}
+                        className="flex items-center text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 disabled:bg-green-300 transition-colors"
+                    >
+                        {isSaving ? (
+                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-1"></div>
+                        ) : (
+                            <Save size={16} className="mr-1" />
+                        )}
+                        Save Chat
+                    </button>
+                </div>
+                <div>
+                    <h1 className="text-xl font-semibold text-gray-800">{title}</h1>
+                    <p className="text-sm text-gray-600 mt-1">
+                        Continuing your conversation about your diabetes data.
+                    </p>
+                </div>
+            </div>
+
             {/* Messages container */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 <AnimatePresence>

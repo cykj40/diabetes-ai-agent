@@ -1,6 +1,7 @@
 import type { Config } from "tailwindcss";
+import typography from '@tailwindcss/typography';
 
-const config = {
+const config: Config = {
   content: [
     "./app/**/*.{js,ts,jsx,tsx,mdx}",        // Next.js 15 App Router
     "./pages/**/*.{js,ts,jsx,tsx,mdx}",      // For legacy Next.js projects
@@ -67,9 +68,7 @@ const config = {
       },
     },
   },
-  plugins: [
-    require('@tailwindcss/typography'),
-  ],
+  plugins: [typography],
 } satisfies Config;
 
 export default config;

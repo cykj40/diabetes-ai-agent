@@ -1,6 +1,5 @@
 'use client';
 
-import { UserButton } from "@clerk/nextjs";
 import GlucoseChart from "../../components/GlucoseChart";
 import DexcomStatus from "../../components/DexcomStatus";
 import WeeklyBloodSugarChart from "../../components/WeeklyBloodSugarChart";
@@ -10,12 +9,70 @@ import DailyAverageReading from "../../components/DailyAverageReading";
 import TimeInRangeReading from "../../components/TimeInRangeReading";
 import WeeklyPatterns from "../../components/WeeklyPatterns";
 import { BsBell } from 'react-icons/bs';
-import { FiSettings, FiActivity } from 'react-icons/fi';
+import { FiSettings, FiActivity, FiUser } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
 import Link from 'next/link';
 import ClientOnly from "../../components/ClientOnly";
+import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function Dashboard() {
+    const router = useRouter();
+    const [user, setUser] = useState<{ id: string; email: string } | null>(null);
+
+    useEffect(() => {
+        // Function to get token from cookies
+        const getToken = () => {
+            const cookies = document.cookie.split(';');
+            for (const cookie of cookies) {
+                const [name, value] = cookie.trim().split('=');
+                if (name === 'auth_token') {
+                    return value;
+                }
+            }
+            return null;
+        };
+
+        // Check if user is authenticated
+        const token = getToken();
+        if (!token) {
+            router.push('/signin');
+            return;
+        }
+
+        // Fetch current user
+        const fetchUser = async () => {
+            try {
+                const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/auth/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error('Failed to fetch user');
+                }
+
+                const data = await response.json();
+                if (data.success) {
+                    setUser(data.user);
+                } else {
+                    router.push('/signin');
+                }
+            } catch (error) {
+                console.error('Error fetching user:', error);
+                router.push('/signin');
+            }
+        };
+
+        fetchUser();
+    }, [router]);
+
+    const handleSignOut = () => {
+        document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+        router.push('/signin');
+    };
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
             {/* Navigation */}
@@ -42,7 +99,19 @@ export default function Dashboard() {
                             <FiSettings className="text-xl" />
                         </button>
                         <ClientOnly fallback={<div className="w-8 h-8 rounded-full bg-gray-200"></div>}>
-                            <UserButton afterSignOutUrl="/" />
+                            <div className="relative group">
+                                <button className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-100 text-blue-800 hover:bg-blue-200">
+                                    <FiUser />
+                                </button>
+                                <div className="absolute right-0 mt-2 w-48 py-2 bg-white rounded-md shadow-xl z-20 hidden group-hover:block">
+                                    <div className="px-4 py-2 text-sm text-gray-700 border-b">
+                                        {user?.email}
+                                    </div>
+                                    <a href="/account" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Account</a>
+                                    <a href="/settings" className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100">Settings</a>
+                                    <button onClick={handleSignOut} className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-gray-100">Sign out</button>
+                                </div>
+                            </div>
                         </ClientOnly>
                     </div>
                 </div>

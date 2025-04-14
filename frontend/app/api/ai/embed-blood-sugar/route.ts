@@ -1,21 +1,41 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { getAuth } from '@clerk/nextjs/server';
+import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
     try {
-        const { userId } = getAuth(request);
+        // Get token from cookies
+        const token = cookies().get('auth_token')?.value;
+
+        if (!token) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        // Get user from token
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+        const userResponse = await fetch(`${backendUrl}/api/auth/me`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!userResponse.ok) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const userData = await userResponse.json();
+        const userId = userData.user?.id;
+
         if (!userId) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
         console.log('Using backend URL:', backendUrl);
 
         const response = await fetch(`${backendUrl}/api/ai/embed-blood-sugar`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${userId}`
+                'Authorization': `Bearer ${token}`
             },
             body: JSON.stringify({}), // No need to pass any data, the backend will fetch from Dexcom
         });

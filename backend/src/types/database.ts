@@ -4,4 +4,19 @@ export interface HealthData {
     data_type: string;
     value: any;
     timestamp: Date;
+}
+
+export interface User {
+    id: string;
+    email: string;
+    password: string;
+    createdAt: Date;
+    updatedAt: Date;
+}
+
+export interface Session {
+    id: string;
+    userId: string;
+    expiresAt: Date;
+    createdAt: Date;
 } 

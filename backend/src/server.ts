@@ -21,6 +21,7 @@ import { BloodSugarEmbeddingService } from './services/blood-sugar-embedding.ser
 import { debounce } from 'lodash';
 import aiRoutes from './routes/ai.routes';
 import axios from 'axios';
+import authRoutes from './routes/auth.routes';
 
 // Extend the Session interface to include our custom properties
 declare module '@fastify/session' {
@@ -118,6 +119,9 @@ const bloodSugarEmbeddingService = new BloodSugarEmbeddingService();
 
 // Register AI routes
 app.register(aiRoutes, { prefix: '/api/ai' });
+
+// Register auth routes
+app.register(authRoutes, { prefix: '/api/auth' });
 
 // Define route schemas
 const StatusResponse = Type.Object({
@@ -961,6 +965,10 @@ const start = async () => {
         app.log.info('- GET /auth/dexcom/callback');
         app.log.info('- GET /auth/dexcom/status');
         app.log.info('- POST /auth/dexcom/refresh');
+        app.log.info('- POST /api/auth/signup');
+        app.log.info('- POST /api/auth/signin');
+        app.log.info('- GET /api/auth/me');
+        app.log.info('- POST /api/auth/signout');
         app.log.info('\nAPI:');
         app.log.info('- GET /api/dexcom/readings');
         app.log.info('- GET /api/dexcom/devices');

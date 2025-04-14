@@ -13,6 +13,11 @@
     "module": "ESNext",
     // Determine how modules are resolved. 'NodeNext' is a good fit for modern Node, but 'node' is also common.
     "moduleResolution": "node",
+    // Path alias configuration
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"]
+    },
     // ****************************
     //   Strictness & Quality
     // ****************************

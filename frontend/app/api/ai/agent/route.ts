@@ -1,41 +1,74 @@
 import { NextResponse, NextRequest } from 'next/server';
-import { getAuth } from '@clerk/nextjs/server';
+import { cookies } from 'next/headers';
 
 export async function POST(request: NextRequest) {
     try {
-        const { userId } = getAuth(request);
+        // Get auth token from request header - using header is more reliable in API routes
+        const authHeader = request.headers.get('authorization');
+        let token = null;
+
+        // First check for Authorization header
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            token = authHeader.substring(7);
+        }
+
+        // If no header, try to get from cookies
+        if (!token) {
+            token = request.cookies.get('auth_token')?.value;
+        }
+
+        if (!token) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        // Fetch user information using the token
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
+        // Validate the token and get user ID
+        const userResponse = await fetch(`${backendUrl}/api/auth/me`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!userResponse.ok) {
+            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        }
+
+        const userData = await userResponse.json();
+        const userId = userData.user?.id;
+
         if (!userId) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
+        // Get the request body
         const body = await request.json();
-        const { message, sessionId = 'default' } = body;
-
-        if (!message) {
-            return NextResponse.json(
-                { error: 'Message is required' },
-                { status: 400 }
-            );
-        }
-
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
         const response = await fetch(`${backendUrl}/api/ai/agent`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${userId}`
+                'Authorization': `Bearer ${token}`
             },
-            body: JSON.stringify({
-                message,
-                sessionId
-            }),
+            body: JSON.stringify(body),
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            console.error('Backend error:', errorData);
-            return NextResponse.json(errorData, { status: response.status });
+            const errorText = await response.text();
+            console.error('Backend error response:', errorText);
+
+            let errorData = {};
+            try {
+                errorData = JSON.parse(errorText);
+            } catch (e) {
+                console.error('Failed to parse error response as JSON');
+            }
+
+            return NextResponse.json(
+                errorData || { error: `Server responded with status: ${response.status}` },
+                { status: response.status }
+            );
         }
 
         const data = await response.json();
@@ -44,7 +77,7 @@ export async function POST(request: NextRequest) {
         console.error('API route error:', error);
         return NextResponse.json(
             {
-                error: 'Failed to process message',
+                error: 'Failed to process request',
                 details: error instanceof Error ? error.message : 'Unknown error'
             },
             { status: 500 }

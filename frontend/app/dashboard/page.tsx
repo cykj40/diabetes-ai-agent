@@ -2,12 +2,13 @@
 
 import GlucoseChart from "../../components/GlucoseChart";
 import DexcomStatus from "../../components/DexcomStatus";
-import WeeklyBloodSugarChart from "../../components/WeeklyBloodSugarChart";
-import TimeOfDayBloodSugarChart from "../../components/TimeOfDayBloodSugarChart";
+// Import commented out until components are available
+// import WeeklyBloodSugarChart from "../../components/WeeklyBloodSugarChart";
+
 import CurrentGlucoseReading from "../../components/CurrentGlucoseReading";
 import DailyAverageReading from "../../components/DailyAverageReading";
 import TimeInRangeReading from "../../components/TimeInRangeReading";
-import WeeklyPatterns from "../../components/WeeklyPatterns";
+// import WeeklyPatterns from "../../components/WeeklyPatterns";
 import { BsBell } from 'react-icons/bs';
 import { FiSettings, FiActivity, FiUser } from 'react-icons/fi';
 import { RiPulseLine } from 'react-icons/ri';
@@ -143,12 +144,12 @@ export default function Dashboard() {
                             </ClientOnly>
                         </div>
 
-                        {/* Weekly Blood Sugar Chart */}
-                        <div className="mt-6">
+                        {/* Weekly Blood Sugar Chart - Commented out until component is available */}
+                        {/* <div className="mt-6">
                             <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
                                 <WeeklyBloodSugarChart />
                             </ClientOnly>
-                        </div>
+                        </div> */}
                     </div>
 
                     {/* Right Column - AI Insights */}
@@ -190,8 +191,8 @@ export default function Dashboard() {
                     </div>
                 </div>
 
-                {/* Pattern Analysis Section */}
-                <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Pattern Analysis Section - commented out until components are available */}
+                {/* <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
                         <h2 className="text-xl font-semibold text-gray-800 mb-4">Time of Day Analysis</h2>
                         <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
@@ -204,7 +205,7 @@ export default function Dashboard() {
                             <WeeklyPatterns />
                         </ClientOnly>
                     </div>
-                </div>
+                </div> */}
             </main>
         </div>
     );

@@ -37,10 +37,10 @@ export class DiabetesAgent {
     private sessionContexts: Map<string, any> = new Map();
 
     constructor() {
-        // Use GPT-4 for better reasoning capabilities
+        // Use GPT-4.5 for better agentic execution capabilities
         this.llm = new ChatOpenAI({
             temperature: 0.2, // Slightly increased for more creative responses
-            modelName: 'gpt-4o', // Using GPT-4o for better reasoning
+            modelName: 'gpt-4.5', // Using GPT-4.5 for better agentic execution
             openAIApiKey: process.env.OPENAI_API_KEY
         });
         this.dexcomService = new DexcomService();
@@ -58,132 +58,79 @@ export class DiabetesAgent {
     }
 
     private async initializeAgent() {
-        // Get all tools from the AgentToolsService
-        const tools = this.agentToolsService.getTools();
+        try {
+            // Create a more descriptive system prompt
+            const systemPrompt = `You are a diabetes management assistant that helps users understand their blood sugar data.
 
-        // Get the user profile for the default user
-        const userProfilePrompt = this.userProfileService.getProfilePrompt('default-user');
+AGENTIC CAPABILITIES INSTRUCTIONS:
+1. Take initiative to solve user problems - don't just answer questions, provide actionable insights and solutions.
+2. Be proactive in suggesting relevant tools based on context, even when not explicitly requested.
+3. Plan multi-step sequences when needed to fulfill complex user requests.
+4. Consider the most efficient tools for each task and use them appropriately.
+5. When appropriate, make inferences about the user's goals from context.
+6. Use web search to find up-to-date information when needed.
 
-        // Create the agent with a more specific system prompt
-        const systemPrompt = `You are an advanced diabetes management assistant that proactively helps users understand their blood sugar data through analysis, visualization, and actionable insights.
+TOOL USAGE INSTRUCTIONS:
+1. Use the dexcom_data tool to fetch blood sugar readings and analyze patterns
+2. Use the blood_sugar_impact tool to analyze factors impacting glucose levels
+3. Use the nutrition_lookup tool for food and carbohydrate information
+4. Use the insulin_calculator tool to suggest insulin dosing
+5. Use the chart_generator tool to create helpful visualizations
+6. Use peloton workout tools to analyze exercise impact on blood sugar
+7. Use the web_search tool to find current information about treatments, research, and diabetes management approaches
 
-${userProfilePrompt}
+RESPONSE GUIDELINES:
+1. Be concise but informative in your responses.
+2. Always interpret the blood sugar values in mg/dL.
+3. Normal range for blood sugar is typically 70-180 mg/dL.
+4. For current readings, mention the current value, trend, and time.
+5. For pattern analysis, highlight notable trends, potential issues, and improvements.
+6. When discussing workouts, mention duration, intensity, and how they might affect glucose levels.
+7. When providing information from web searches, cite the source and synthesize the information clearly.
 
-INSULIN INFORMATION:
-- Short Acting Insulin (Novolog):
-  * Used for meals and blood sugar corrections
-  * Insulin to carb ratio: 1 unit for every 4.5 grams of carbs
-  * Correction factor: 1 unit lowers blood sugar by 25 mg/dl
-  * Duration: 4 hours (active insulin time)
-  * Keep track of insulin on board when calculating doses
+Remember to be supportive and helpful, focusing on providing actionable insights to improve the user's diabetes management.`;
 
-- Long Acting Insulin:
-  * Morning dose: 20-24 units at 6:00 AM (lasts 24 hours)
-  * Evening dose: 10-14 units at 6:00 PM (lasts until morning)
-  * Provides baseline insulin coverage
+            const prompt = ChatPromptTemplate.fromMessages([
+                ["system", systemPrompt],
+                ["human", "{input}"],
+                ["ai", "{agent_scratchpad}"]
+            ]);
 
-CORE RESPONSIBILITIES:
-1. Proactive Monitoring & Analysis
-   - Regularly check current blood sugar and recent trends
-   - Analyze patterns and identify potential issues
-   - Create visualizations to help understand the data
-   - Provide actionable recommendations
+            // Get the tools to use
+            const tools = this.agentToolsService.getTools();
 
-2. Chart Creation & Visualization
-   - ALWAYS include relevant charts when discussing blood sugar data
-   - For trends analysis: Create line charts showing blood sugar over time
-   - For pattern analysis: Create pie charts showing time in range distribution
-   - ALWAYS analyze the chart data in detail:
-     * For Time in Range charts:
-       - Evaluate if the percentages are within recommended targets (>70% in range)
-       - Identify which times of day contribute most to highs/lows
-       - Suggest specific actions to improve time in range
-     * For Trend charts:
-       - Identify peak times and potential causes
-       - Note any concerning patterns
-       - Recommend timing adjustments for insulin/meals
+            // Create the agent with the tools
+            const agent = await createOpenAIFunctionsAgent({
+                llm: this.llm,
+                tools,
+                prompt
+            });
 
-3. Response Structure
-   When showing charts, ALWAYS include:
-   1. Current Status:
-      - Latest blood sugar reading and trend
-      - Time in range for the period
-   2. Chart Visualization:
-      - The chart itself
-      - Clear explanation of what the data shows
-   3. Pattern Analysis:
-      - Detailed breakdown of the numbers
-      - Comparison to recommended targets
-      - Identification of problem areas
-   4. Actionable Recommendations:
-      - Specific steps to address identified issues
-      - Preventive measures for recurring patterns
-      - Timing suggestions for insulin/meals if relevant
-   5. Follow-up Questions:
-      - Prompt for any clarification needed
-      - Suggest additional analyses that might be helpful
+            this.agent = new AgentExecutor({
+                agent,
+                tools,
+                memory: this.memory,
+                returnIntermediateSteps: true,
+                maxIterations: 7,
+                verbose: true,
+                handleParsingErrors: true,
+            });
 
-4. Data Analysis Guidelines
-   - Current readings: Use get_current_blood_sugar tool
-   - Recent history: Use get_recent_blood_sugar_readings tool
-   - Weekly patterns: Use get_weekly_blood_sugar_data tool
-   - Pattern analysis: Use analyze_blood_sugar_patterns tool
-   - Visualizations: Use create_chart tool with appropriate type
+            // Create a runnable with chat history
+            const withMemory = new RunnableWithMessageHistory({
+                runnable: this.agent as unknown as Runnable,
+                getMessageHistory: (sessionId: string) => new PersistentMessageHistory(sessionId),
+                inputMessagesKey: "input",
+                historyMessagesKey: "chat_history",
+            });
 
-5. Insulin Calculations:
-   - When asked about insulin doses for high blood sugar:
-     * ALWAYS use the calculate_insulin_dose tool
-     * If the user doesn't provide complete information (carbs, current blood sugar, etc.):
-       - Ask clear follow-up questions to gather the missing information
-       - Don't make assumptions about meal content or carb counts
-       - Explicitly ask about carb content when discussing meals
-       - Ask about recent insulin doses to check for insulin on board
-     * Consider both correction doses (1 unit per 25 mg/dl) and carb coverage (1:4.5 ratio)
-     * Account for active insulin (insulin on board) within the 4-hour window
-     * Provide clear explanations for dose calculations
-
-6. Additional Support:
-   - Food & Nutrition: Use get_food_nutritional_info tool
-   - Meal Suggestions: Use suggest_meal tool
-   - Always reference medical guidelines from reputable sources
-
-IMPORTANT BEHAVIORS:
-- When asked about insulin doses, use the calculate_insulin_dose tool, don't guess
-- Ask for missing information rather than making assumptions
-- For meal-related insulin calculations, always ask for the carb count if not provided
-- Check if the user has taken insulin recently before suggesting correction doses
-- Always provide context for blood sugar numbers
-- Be specific with recommendations
-- Consider the user's full insulin regimen
-- Be supportive while maintaining professionalism
-- Alert to concerning patterns
-- Suggest preventive measures
-
-Remember: You are a comprehensive diabetes management tool. Every response should combine data visualization with practical insights and actionable advice.`;
-
-        const prompt = ChatPromptTemplate.fromMessages([
-            ["system", systemPrompt],
-            ["human", "{input}"],
-            ["ai", "{agent_scratchpad}"]
-        ]);
-
-        // Create the agent with the tools
-        const agent = await createOpenAIFunctionsAgent({
-            llm: this.llm,
-            tools,
-            prompt
-        });
-
-        this.agent = new AgentExecutor({
-            agent,
-            tools,
-            memory: this.memory,
-            returnIntermediateSteps: true,
-            maxIterations: 5,
-            verbose: true, // Enable verbose mode for debugging
-        });
-
-        this.agentWithMemory = this.agent as unknown as Runnable<AgentInput, ChainValues>;
+            this.agentWithMemory = withMemory as unknown as Runnable<AgentInput, ChainValues>;
+            console.log('Agent initialized successfully');
+            return this.agent;
+        } catch (error) {
+            console.error('Error initializing agent:', error);
+            throw new Error('Failed to initialize agent');
+        }
     }
 
     async monitor(sessionId: string = 'default'): Promise<ChainValues> {

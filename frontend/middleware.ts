@@ -20,6 +20,7 @@ export function middleware(request: NextRequest) {
         path === '/signup' ||
         path.startsWith('/_next') ||
         path.startsWith('/api/auth') ||
+        path.startsWith('/api/ai/agent') ||
         path === '/';
 
     // Get the token from cookies

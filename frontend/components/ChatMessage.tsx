@@ -2,8 +2,8 @@
 
 // This is a Server Component by default (no "use client" directive)
 import React from 'react';
-import { FaUser } from 'react-icons/fa';
-import { BsRobot } from 'react-icons/bs';
+import { User, Bot } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import BloodSugarCharts from './BloodSugarCharts';
 import AIChartRenderer from './AIChartRenderer';
 
@@ -22,9 +22,10 @@ interface MessageProps {
         title: string;
         insights?: string[];
     };
+    isTyping?: boolean;
 }
 
-export default function ChatMessage({ id, text, sender, timestamp, chartData }: MessageProps) {
+export default function ChatMessage({ id, text, sender, timestamp, chartData, isTyping = false }: MessageProps) {
     // Try to extract chart data from the message text if it's from AI
     const extractChartData = (text: string): string | null => {
         // First try to find JSON code blocks
@@ -58,45 +59,62 @@ export default function ChatMessage({ id, text, sender, timestamp, chartData }: 
         .replace(/\{[\s\S]*"type":\s*["'](line|pie)["'][\s\S]*\}/, '')
         .trim();
 
+    const components = {
+        p: (props: any) => <p className="mb-2 leading-relaxed" {...props} />,
+        strong: (props: any) => <strong className="font-bold" {...props} />,
+        ul: (props: any) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
+        ol: (props: any) => <ol className="list-decimal ml-4 mb-2 space-y-1" {...props} />,
+        li: (props: any) => <li className="mb-1" {...props} />,
+        code: (props: any) => <code className="bg-gray-100 rounded px-1 py-0.5 text-sm font-mono" {...props} />
+    };
+
     return (
         <div
             key={id}
-            className={`flex ${sender === 'user' ? 'justify-end' : 'justify-start'} mb-4`}
+            className={`w-full ${sender === 'ai' ? 'bg-gray-50' : 'bg-white'} border-b border-gray-200`}
         >
-            <div
-                className={`max-w-[80%] rounded-lg p-3 ${sender === 'user'
-                    ? 'bg-blue-500 text-white rounded-br-none'
-                    : sender === 'system'
-                        ? 'bg-yellow-100 text-gray-800 border border-yellow-300'
-                        : 'bg-gray-200 text-gray-800 rounded-bl-none'
-                    }`}
-            >
-                <div className="flex items-center mb-1">
-                    {sender === 'user' ? (
-                        <FaUser className="mr-2 text-white" />
-                    ) : sender === 'system' ? (
-                        <span className="mr-2 text-yellow-600 text-sm font-semibold">SYSTEM</span>
-                    ) : (
-                        <BsRobot className="mr-2" />
-                    )}
-                    <span className="text-xs opacity-75">{timestamp}</span>
-                </div>
-                <div className="whitespace-pre-wrap">{cleanedText}</div>
+            <div className="max-w-3xl mx-auto px-4 sm:px-8 py-6">
+                <div className="flex items-start gap-4">
+                    {/* Avatar */}
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${sender === 'user'
+                        ? 'bg-blue-600 text-white'
+                        : sender === 'system'
+                            ? 'bg-yellow-500 text-white'
+                            : 'bg-teal-600 text-white'
+                        }`}>
+                        {sender === 'user' ? (
+                            <User size={16} />
+                        ) : sender === 'system' ? (
+                            <span className="text-xs font-semibold">SYS</span>
+                        ) : (
+                            <Bot size={16} />
+                        )}
+                    </div>
 
-                {/* Render chart if available */}
-                {typeof chartData === 'string' ? (
-                    <div className="mt-3 bg-white rounded-lg p-3">
-                        <AIChartRenderer chartData={chartData} />
+                    {/* Message content */}
+                    <div className="flex-1 text-gray-800 min-w-0">
+                        <div className={`prose prose-sm sm:prose-base ${isTyping ? 'typing-animation' : ''}`}>
+                            <ReactMarkdown components={components}>
+                                {cleanedText}
+                            </ReactMarkdown>
+                        </div>
+
+                        {/* Render chart if available */}
+                        {typeof chartData === 'string' ? (
+                            <div className="mt-4 bg-white rounded-lg border border-gray-200 p-4">
+                                <AIChartRenderer chartData={chartData} />
+                            </div>
+                        ) : chartData ? (
+                            <div className="mt-4 bg-white rounded-lg border border-gray-200 p-4">
+                                <BloodSugarCharts data={chartData} />
+                            </div>
+                        ) : aiChartData ? (
+                            <div className="mt-4 bg-white rounded-lg border border-gray-200 p-4">
+                                <AIChartRenderer chartData={aiChartData} />
+                            </div>
+                        ) : null}
                     </div>
-                ) : chartData ? (
-                    <div className="mt-3 bg-white rounded-lg p-3">
-                        <BloodSugarCharts data={chartData} />
-                    </div>
-                ) : aiChartData ? (
-                    <div className="mt-3 bg-white rounded-lg p-3">
-                        <AIChartRenderer chartData={aiChartData} />
-                    </div>
-                ) : null}
+                </div>
             </div>
         </div>
     );

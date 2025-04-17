@@ -3,9 +3,10 @@ import { AIService } from '../services/ai.service';
 import { BloodSugarEmbeddingService } from '../services/blood-sugar-embedding.service';
 import { DexcomService } from '../services/dexcom.service';
 import { DiabetesAgent } from '../services/diabetes-agent';
-import { DiabetesAgentService } from '../services/agent.service';
+import { AgentService } from '../services/agent.service';
 import { formatDexcomDate, generateMockReadings, debouncedProcessReadings } from '../server';
 import { PrismaClient } from '@prisma/client';
+import { BaseMessage } from '@langchain/core/messages';
 
 // Create a Prisma client instance
 const prisma = new PrismaClient();
@@ -32,6 +33,13 @@ interface QueryBloodSugarBody {
 interface ChatBody {
     message: string;
     sessionId?: string;
+    useWebSearch?: boolean;
+}
+
+// Define request body types for updating chat sessions
+interface UpdateSessionBody {
+    title: string;
+    userId?: string;
 }
 
 export default async function aiRoutes(fastify: FastifyInstance) {
@@ -39,7 +47,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     const bloodSugarEmbeddingService = new BloodSugarEmbeddingService();
     const dexcomService = new DexcomService();
     const diabetesAgent = new DiabetesAgent();
-    const diabetesAgentService = new DiabetesAgentService();
+    const agentService = new AgentService();
 
     // Initialize the embedding service when the server starts
     try {
@@ -233,32 +241,38 @@ export default async function aiRoutes(fastify: FastifyInstance) {
             let userId = 'default-user';
 
             if (authHeader && authHeader.startsWith('Bearer ')) {
-                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+                // Try to get userId from token, but don't fail if token is invalid
+                try {
+                    const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+                    // You could validate the token here if needed
+                    // For now, we'll just use the token as the userId or a default
+                    userId = token !== 'undefined' && token !== 'null' ? token : 'default-user';
+                } catch (error) {
+                    console.warn('Failed to process authorization token:', error);
+                    // Continue with default user
+                }
             }
 
-            const { message, sessionId = 'default' } = request.body;
+            // Extract parameters from request
+            const { message, sessionId = 'default', useWebSearch = false } = request.body;
 
             if (!message) {
                 return reply.code(400).send({ error: 'Message is required' });
             }
 
-            // Use the DiabetesAgentService to process the message with tool calls
-            const result = await diabetesAgentService.ask(message, userId, sessionId);
-
-            // Get the chat history to include in the response
-            const fullSessionId = `${userId}-${sessionId}`;
-            const chatHistory = await diabetesAgentService.getChatHistory(fullSessionId);
+            // Use the AgentService to process the message with tool calls
+            const result = await agentService.ask(message, userId, sessionId, useWebSearch);
 
             // Format the response for the frontend
             const response = {
-                message: result.output,
-                chatHistory: chatHistory.map(msg => ({
+                message: result.message,
+                chatHistory: result.chatHistory.map((msg: any) => ({
                     id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                    text: typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content),
-                    sender: msg._getType() === 'human' ? 'user' : 'ai',
+                    text: typeof msg.text === 'string' ? msg.text : JSON.stringify(msg.text),
+                    sender: msg.sender === 'user' ? 'user' : 'ai',
                     timestamp: new Date().toLocaleTimeString()
                 })),
-                sessionId: fullSessionId
+                sessionId: result.sessionId
             };
 
             return response;
@@ -350,6 +364,93 @@ export default async function aiRoutes(fastify: FastifyInstance) {
 
     // Endpoint to delete chat history for a session
     fastify.delete<{ Params: ChatParams }>('/chat-history/:sessionId', async (request, reply) => {
+        try {
+            // Extract user ID from authorization header
+            const authHeader = request.headers.authorization;
+            let userId = 'default-user';
+
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            }
+
+            const { sessionId = 'default' } = request.params;
+            const fullSessionId = `${userId}-${sessionId}`;
+
+            // Delete all messages for this session
+            await prisma.chatMessage.deleteMany({
+                where: { sessionId: fullSessionId },
+            });
+
+            return { success: true, message: 'Chat history cleared successfully' };
+        } catch (error) {
+            console.error('Error clearing chat history:', error);
+            return reply.code(500).send({
+                error: 'Failed to clear chat history',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
+    // Endpoint to update a chat session
+    fastify.put<{ Params: ChatParams, Body: UpdateSessionBody }>('/chat-sessions/:sessionId', async (request, reply) => {
+        try {
+            // Extract user ID from authorization header
+            const authHeader = request.headers.authorization;
+            let userId = 'default-user';
+
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            }
+
+            const { sessionId = 'default' } = request.params;
+            const { title } = request.body;
+            const fullSessionId = `${userId}-${sessionId}`;
+
+            if (!title) {
+                return reply.code(400).send({ error: 'Title is required' });
+            }
+
+            // Check if we have any messages for this session
+            const existingMessages = await prisma.chatMessage.findFirst({
+                where: { sessionId: fullSessionId }
+            });
+
+            if (!existingMessages) {
+                // No messages exist for this session yet, create a system message to save the title
+                await prisma.chatMessage.create({
+                    data: {
+                        id: `sys-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                        content: title,
+                        type: 'system',
+                        sessionId: fullSessionId,
+                        timestamp: new Date()
+                    }
+                });
+            } else {
+                // Try to update the session name by adding a system message
+                await prisma.chatMessage.create({
+                    data: {
+                        id: `sys-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+                        content: `Session renamed to: ${title}`,
+                        type: 'system',
+                        sessionId: fullSessionId,
+                        timestamp: new Date()
+                    }
+                });
+            }
+
+            return { success: true, message: 'Chat session updated successfully', sessionId: fullSessionId };
+        } catch (error) {
+            console.error('Error updating chat session:', error);
+            return reply.code(500).send({
+                error: 'Failed to update chat session',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
+    // Endpoint to delete a chat session
+    fastify.delete<{ Params: ChatParams }>('/chat-sessions/:sessionId', async (request, reply) => {
         try {
             // Extract user ID from authorization header
             const authHeader = request.headers.authorization;

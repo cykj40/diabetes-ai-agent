@@ -9,10 +9,8 @@ export default function SessionPage() {
     const sessionId = params.sessionId as string;
 
     return (
-        <div className="h-full flex flex-col">
-            <div className="flex-1">
-                <AgentChat sessionId={sessionId} />
-            </div>
+        <div className="h-full">
+            <AgentChat sessionId={sessionId} />
         </div>
     );
 } 

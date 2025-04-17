@@ -1,166 +1,177 @@
+import { v4 as uuidv4 } from 'uuid';
 import { ChatOpenAI } from '@langchain/openai';
-import { AgentExecutor, createOpenAIFunctionsAgent } from "langchain/agents";
-import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { AgentToolsService } from './agent-tools.service';
-import { PersistentMessageHistory } from './message-store';
-import { RunnableWithMessageHistory, Runnable } from "@langchain/core/runnables";
-import { BaseMessage, HumanMessage, AIMessage, SystemMessage } from "@langchain/core/messages";
-import { BufferMemory } from "langchain/memory";
+import axios from 'axios';
 
-interface AgentInput {
-    input: string;
-    chat_history?: Array<HumanMessage | AIMessage>;
-}
+export type Message = {
+    id?: string;
+    text: string;
+    sender: 'user' | 'ai';
+    timestamp?: string;
+};
 
-interface ChainValues {
-    input: string;
-    chat_history: Array<BaseMessage>;
-    output: string;
-}
-
-export class DiabetesAgentService {
-    private readonly llm: ChatOpenAI;
-    private readonly toolsService: AgentToolsService;
-    private agent: AgentExecutor | null = null;
-    private agentWithMemory: Runnable<AgentInput, ChainValues> | null = null;
-    private memory: BufferMemory;
+export class AgentService {
+    private _model: ChatOpenAI;
+    private _messageStore: Map<string, Message[]> = new Map();
 
     constructor() {
-        // Use GPT-4o for better reasoning capabilities
-        this.llm = new ChatOpenAI({
-            temperature: 0.2, // Slightly increased for more creative responses
-            modelName: 'gpt-4o', // Using GPT-4o for better reasoning
-            openAIApiKey: process.env.OPENAI_API_KEY
-        });
-        this.toolsService = new AgentToolsService();
-        this.memory = new BufferMemory({
-            returnMessages: true,
-            memoryKey: "chat_history",
-            inputKey: "input",
-            outputKey: "output",
+        this._model = new ChatOpenAI({
+            modelName: process.env.OPENAI_MODEL || 'gpt-4-turbo-preview',
+            temperature: 0,
         });
     }
 
-    async initializeAgent(userId: string = 'default-user') {
-        // Create the agent with a more specific system prompt
-        const systemPrompt = `You are a diabetes management assistant that helps users understand their blood sugar data.
-
-IMPORTANT INSTRUCTIONS:
-1. When the user asks about their current blood sugar, use the dexcom_data tool with action="current_reading".
-2. When the user asks about recent readings, use the dexcom_data tool with action="recent_readings".
-3. When the user asks about daily patterns (morning vs evening), use the dexcom_data tool with action="daily_patterns".
-4. When the user asks about weekly patterns (which days are better/worse), use the dexcom_data tool with action="weekly_patterns".
-5. When the user asks for comprehensive analysis over a time period, use the dexcom_data tool with action="time_period_analysis".
-6. When the user asks for charts or visualizations, use the generate_chart tool with the appropriate chart type.
-7. Be concise but informative in your responses.
-8. Always interpret the blood sugar values in mg/dL.
-9. Normal range for blood sugar is typically 70-180 mg/dL.
-10. For current readings, mention the current value, trend, and time.
-11. For pattern analysis, highlight notable trends, potential issues, and improvements.
-
-Remember to be supportive and helpful, focusing on providing actionable insights about the user's diabetes management.`;
-
-        const prompt = ChatPromptTemplate.fromMessages([
-            ["system", systemPrompt],
-            ["human", "{input}"],
-            ["ai", "{agent_scratchpad}"]
-        ]);
-
-        // Get tools for this user
-        const tools = this.toolsService.getTools(userId);
-
-        // Create the agent with the tools
-        const agent = await createOpenAIFunctionsAgent({
-            llm: this.llm,
-            tools,
-            prompt
-        });
-
-        this.agent = new AgentExecutor({
-            agent,
-            tools,
-            memory: this.memory,
-            returnIntermediateSteps: true,
-            maxIterations: 5,
-            verbose: true, // Enable verbose mode for debugging
-        });
-
-        this.agentWithMemory = this.agent as unknown as Runnable<AgentInput, ChainValues>;
-        return this.agent;
+    private async getMessages(userId: string, sessionId: string): Promise<Message[]> {
+        const fullSessionId = `${userId}-${sessionId}`;
+        return this._messageStore.get(fullSessionId) || [];
     }
 
-    async ask(question: string, userId: string = 'default-user', sessionId: string = 'default'): Promise<ChainValues> {
-        if (!this.agentWithMemory) {
-            await this.initializeAgent(userId);
-            if (!this.agentWithMemory) {
-                throw new Error('Failed to initialize agent');
-            }
-        }
+    private async addMessage(userId: string, sessionId: string, message: Message): Promise<void> {
+        const fullSessionId = `${userId}-${sessionId}`;
+        const messages = this._messageStore.get(fullSessionId) || [];
+        messages.push(message);
+        this._messageStore.set(fullSessionId, messages);
+    }
 
+    async ask(
+        question: string,
+        userId: string,
+        sessionId?: string,
+        useWebSearch: boolean = false
+    ): Promise<{ message: string; sessionId: string; chatHistory: Message[] }> {
         try {
-            console.log(`Processing question for user ${userId}, session ${sessionId}: ${question}`);
+            // Initialize or retrieve session
+            const currentSessionId = sessionId || uuidv4();
+            console.log(`Processing question for user ${userId} in session ${currentSessionId}`);
 
-            // Get chat history
-            const fullSessionId = `${userId}-${sessionId}`;
-            const chatHistory = await this.getChatHistory(fullSessionId);
+            // Get chat history for this session
+            const chatHistory = await this.getMessages(userId, currentSessionId);
 
-            // Invoke the agent
-            const result = await this.agentWithMemory.invoke(
-                {
-                    input: question,
-                    chat_history: chatHistory
-                },
-                {
-                    configurable: {
-                        sessionId: fullSessionId,
-                    },
+            // Add user message to history
+            const userMessageId = uuidv4();
+            const userMessage: Message = {
+                id: userMessageId,
+                text: question,
+                sender: 'user',
+                timestamp: new Date().toISOString(),
+            };
+
+            await this.addMessage(userId, currentSessionId, userMessage);
+
+            let responseText = '';
+
+            // If web search is requested, perform search first
+            if (useWebSearch) {
+                try {
+                    const searchResults = await this.performWebSearch(question);
+
+                    // Augment the prompt with search results
+                    const augmentedPrompt = `
+The user asked: "${question}"
+
+Here are some search results from the web that might be relevant:
+${searchResults}
+
+Based on these search results and your knowledge, please provide a helpful response.`;
+
+                    const response = await this._model.invoke(augmentedPrompt);
+                    responseText = response.content.toString();
+
+                } catch (searchError) {
+                    console.error('Web search error:', searchError);
+                    // Fall back to regular response if search fails
+                    const response = await this._model.invoke(question);
+                    responseText = response.content.toString();
                 }
-            );
+            } else {
+                // Regular response without web search
+                const response = await this._model.invoke(question);
+                responseText = response.content.toString();
+            }
 
-            // Store the interaction in history
-            const history = new PersistentMessageHistory(fullSessionId);
-            await history.addUserMessage(question);
-            await history.addAIMessage(result.output);
+            // Save AI response to message store
+            const aiMessageId = uuidv4();
+            const aiMessage: Message = {
+                id: aiMessageId,
+                text: responseText,
+                sender: 'ai',
+                timestamp: new Date().toISOString(),
+            };
 
-            console.log(`Successfully processed question for session ${fullSessionId}`);
-            return result;
-        } catch (error) {
-            console.error(`Error processing question for session ${userId}-${sessionId}:`, error);
+            await this.addMessage(userId, currentSessionId, aiMessage);
 
-            // Store the error interaction in history
-            const fullSessionId = `${userId}-${sessionId}`;
-            const history = new PersistentMessageHistory(fullSessionId);
-            await history.addUserMessage(question);
-            await history.addAIMessage("I'm sorry, I encountered an error while processing your question. Please try again later or contact support if the issue persists.");
+            // Get updated chat history
+            const updatedChatHistory = await this.getMessages(userId, currentSessionId);
 
             return {
-                input: question,
-                chat_history: await this.getChatHistory(fullSessionId),
-                output: "I'm sorry, I encountered an error while processing your question. Please try again later or contact support if the issue persists."
+                message: responseText,
+                sessionId: currentSessionId,
+                chatHistory: updatedChatHistory,
             };
+        } catch (error: any) {
+            console.error('Error in agent service:', error);
+            throw new Error(`Failed to process your question: ${error.message}`);
         }
     }
 
-    // Helper method to get chat history
-    async getChatHistory(sessionId: string = 'default'): Promise<Array<HumanMessage | AIMessage>> {
+    /**
+     * Performs a web search and returns formatted results
+     */
+    private async performWebSearch(query: string): Promise<string> {
         try {
-            const history = new PersistentMessageHistory(sessionId);
-            return await history.getMessages() as Array<HumanMessage | AIMessage>;
-        } catch (error) {
-            console.error(`Error retrieving chat history for session ${sessionId}:`, error);
-            return [];
-        }
-    }
+            // Use the search API (fallbacks included)
+            const searchUrl = `https://serpapi.com/search?engine=google&q=${encodeURIComponent(query)}&api_key=${process.env.SERP_API_KEY}&num=3`;
+            const fallbackUrl = `https://ddg-api.herokuapp.com/search?query=${encodeURIComponent(query)}&limit=3`;
 
-    // Helper method to clear chat history
-    async clearChatHistory(sessionId: string = 'default'): Promise<void> {
-        try {
-            const history = new PersistentMessageHistory(sessionId);
-            await history.clear();
-            console.log(`Chat history cleared for session ${sessionId}`);
+            let response;
+            try {
+                // Try primary search API first
+                if (process.env.SERP_API_KEY) {
+                    response = await axios.get(searchUrl);
+                } else {
+                    throw new Error("No SERP API key configured");
+                }
+            } catch (error) {
+                // Fall back to alternative API
+                console.log("Falling back to alternative search API");
+                response = await axios.get(fallbackUrl);
+            }
+
+            let results = [];
+
+            // Process the results based on the API response format
+            if (response.data.organic_results) {
+                // SERP API format
+                results = response.data.organic_results.map((result: any) => ({
+                    title: result.title,
+                    link: result.link,
+                    snippet: result.snippet
+                }));
+            } else if (Array.isArray(response.data)) {
+                // Alternative API format
+                results = response.data.map((result: any) => ({
+                    title: result.title,
+                    link: result.url || result.link,
+                    snippet: result.body || result.snippet
+                }));
+            }
+
+            if (results.length === 0) {
+                return "No search results found.";
+            }
+
+            // Format the results as a clear, readable text
+            let formattedResponse = "";
+
+            results.forEach((result: any, index: number) => {
+                formattedResponse += `[${index + 1}] "${result.title}"\n`;
+                formattedResponse += `URL: ${result.link}\n`;
+                formattedResponse += `${result.snippet}\n\n`;
+            });
+
+            return formattedResponse;
         } catch (error) {
-            console.error(`Error clearing chat history for session ${sessionId}:`, error);
-            throw new Error(`Failed to clear chat history: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            console.error("Error performing web search:", error);
+            throw new Error("Failed to perform web search");
         }
     }
 } 

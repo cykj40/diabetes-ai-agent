@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useRef, useEffect, ReactNode } from 'react';
-import { Send, RefreshCw, ArrowLeft, Save } from 'lucide-react';
+import { Send, RefreshCw, ArrowLeft, Plus, Loader2, Save, Trash2, Search } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Components } from 'react-markdown';
 import AIChartRenderer from './AIChartRenderer';
 import { useRouter } from 'next/navigation';
+import ChatMessage from './ChatMessage';
 
 interface Message {
     id: string;
@@ -14,10 +15,6 @@ interface Message {
     sender: 'user' | 'ai';
     timestamp: string;
     isTyping?: boolean;
-}
-
-interface MarkdownComponentProps {
-    children: ReactNode;
 }
 
 interface AgentChatProps {
@@ -30,8 +27,16 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [title, setTitle] = useState('Diabetes AI Assistant');
+    const [useWebSearch, setUseWebSearch] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
+    const inputRef = useRef<HTMLTextAreaElement>(null);
+    const [chatName, setChatName] = useState<string>('');
+
+    // Focus input when component mounts
+    useEffect(() => {
+        inputRef.current?.focus();
+    }, []);
 
     // Load chat history and title on component mount
     useEffect(() => {
@@ -87,49 +92,6 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         }
     };
 
-    const simulateTyping = async (text: string): Promise<void> => {
-        return new Promise((resolve) => {
-            const tempId = Date.now().toString() + '-ai';
-            const aiMessage: Message = {
-                id: tempId,
-                text: '',
-                sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-                isTyping: true
-            };
-
-            setMessages(prev => [...prev, aiMessage]);
-
-            let currentText = '';
-            const words = text.split(' ');
-
-            const typeWord = (index: number) => {
-                if (index < words.length) {
-                    currentText += (index > 0 ? ' ' : '') + words[index];
-                    setMessages(prev =>
-                        prev.map(msg =>
-                            msg.id === tempId
-                                ? { ...msg, text: currentText }
-                                : msg
-                        )
-                    );
-                    setTimeout(() => typeWord(index + 1), 50); // Adjust speed here
-                } else {
-                    setMessages(prev =>
-                        prev.map(msg =>
-                            msg.id === tempId
-                                ? { ...msg, isTyping: false }
-                                : msg
-                        )
-                    );
-                    resolve();
-                }
-            };
-
-            typeWord(0);
-        });
-    };
-
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim() || isLoading) return;
@@ -140,32 +102,81 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
             sender: 'user',
             timestamp: new Date().toLocaleTimeString(),
         };
+
         setMessages((prev) => [...prev, userMessage]);
         setInput('');
         setIsLoading(true);
 
+        // Add typing indicator
+        const typingIndicator: Message = {
+            id: 'typing-' + Date.now().toString(),
+            text: '...',
+            sender: 'ai',
+            timestamp: new Date().toLocaleTimeString(),
+            isTyping: true
+        };
+
+        setMessages((prev) => [...prev, typingIndicator]);
+
         try {
+            // Get token from cookie if available
+            const cookies = document.cookie.split(';');
+            const authCookie = cookies.find(c => c.trim().startsWith('auth_token='));
+            const token = authCookie ? authCookie.split('=')[1].trim() : null;
+
             const response = await fetch('/api/ai/agent', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    ...(token && { Authorization: `Bearer ${token}` }),
                 },
                 body: JSON.stringify({
                     message: input,
                     sessionId,
+                    useWebSearch, // Pass the web search flag
                 }),
             });
 
             if (!response.ok) {
-                throw new Error('Failed to get response from AI');
+                throw new Error(`Error: ${response.status}`);
             }
 
             const data = await response.json();
-            await simulateTyping(data.message);
 
+            // Remove typing indicator
+            setMessages((prev) => prev.filter(msg => !msg.isTyping));
+
+            // Update messages from chat history if provided
+            if (data.chatHistory && Array.isArray(data.chatHistory)) {
+                setMessages(data.chatHistory);
+            } else if (data.message) {
+                // Fallback to adding just the response message
+                const aiMessage: Message = {
+                    id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                    text: data.message,
+                    sender: 'ai',
+                    timestamp: new Date().toLocaleTimeString(),
+                };
+                setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
+            }
+
+            // Reset web search flag after use
+            setUseWebSearch(false);
         } catch (error) {
             console.error('Error sending message:', error);
-            await simulateTyping('Sorry, there was an error processing your request. Please try again.');
+            // Remove typing indicator
+            setMessages((prev) => prev.filter(msg => !msg.isTyping));
+
+            const errorMessage: Message = {
+                id: Date.now().toString(),
+                text: 'Sorry, there was an error processing your request. Please try again.',
+                sender: 'ai',
+                timestamp: new Date().toLocaleTimeString(),
+            };
+            setMessages((prev) => [...prev.filter(msg => !msg.isTyping), errorMessage]);
+
+            // Reset web search flag after use
+            setUseWebSearch(false);
         } finally {
             setIsLoading(false);
         }
@@ -174,169 +185,216 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const handleSaveChat = async () => {
         if (messages.length === 0) return;
 
+        // Generate a default chat name from the first user message if not provided
+        const chatTitle = chatName.trim() || messages.find(m => m.sender === 'user')?.text.substring(0, 30) || `Chat ${new Date().toLocaleString()}`;
+        setChatName(chatTitle);
         setIsSaving(true);
+
         try {
-            // The chat is already being saved automatically on each message
-            // This is just a visual confirmation for the user
-            await new Promise(resolve => setTimeout(resolve, 500));
-            alert('Chat history saved successfully');
+            // Get token from cookie if available
+            const cookies = document.cookie.split(';');
+            const authCookie = cookies.find(c => c.trim().startsWith('auth_token='));
+            const token = authCookie ? authCookie.split('=')[1].trim() : null;
+
+            if (!token) {
+                throw new Error('Authentication required to save chats');
+            }
+
+            // Create a new session with the first message as the title
+            const response = await fetch(`/api/ai/chat-sessions/${sessionId}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    title: chatTitle
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Failed to save chat: ${response.status}`);
+            }
+
+            setTitle(chatTitle);
+            alert('Chat saved successfully!');
+
+            // If we're in a 'default' session, navigate to the new session
+            if (sessionId === 'default') {
+                // Get the latest sessions
+                const sessionsResponse = await fetch('/api/ai/chat-sessions', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (sessionsResponse.ok) {
+                    const sessions = await sessionsResponse.json();
+                    if (sessions.length > 0) {
+                        // Navigate to the first (most recent) session
+                        router.push(`/agent/${sessions[0].id}`);
+                    }
+                }
+            }
         } catch (error) {
             console.error('Error saving chat:', error);
-            alert('Failed to save chat history');
+            alert(`Failed to save chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
         } finally {
             setIsSaving(false);
         }
     };
 
-    // Function to render message content with support for images and markdown
-    const renderMessageContent = (text: string, isTyping: boolean = false) => {
-        // Extract chart data if present
-        const chartMatch = text.match(/\{[\s\S]*"type":\s*["'](line|pie)["'][\s\S]*\}/);
-        let chartData = null;
-        let cleanedText = text;
-
-        if (chartMatch) {
-            try {
-                chartData = chartMatch[0];
-                // Remove the chart data from the text
-                cleanedText = text.replace(chartMatch[0], '');
-            } catch (e) {
-                console.error('Failed to parse chart data:', e);
-            }
+    const handleClearChat = () => {
+        if (confirm('Are you sure you want to clear the chat?')) {
+            clearChatHistory();
         }
+    };
 
-        const components: Components = {
-            p: (props) => <p className={`mb-2 ${isTyping ? 'typing' : ''} leading-relaxed`} {...props} />,
-            strong: (props) => <strong className="font-bold text-inherit" {...props} />,
-            ul: (props) => <ul className="list-disc ml-4 mb-2 space-y-1" {...props} />,
-            ol: (props) => <ol className="list-decimal ml-4 mb-2 space-y-1" {...props} />,
-            li: (props) => <li className="mb-1" {...props} />,
-            code: (props) => <code className="bg-gray-800 text-gray-200 rounded px-1 py-0.5 text-sm" {...props} />
-        };
-
-        return (
-            <div className={`space-y-4 prose prose-sm sm:prose-base ${isTyping ? 'typing-container' : ''}`}>
-                <ReactMarkdown components={components}>
-                    {cleanedText}
-                </ReactMarkdown>
-                {chartData && (
-                    <div className="mt-4 bg-white rounded-lg shadow-sm p-4">
-                        <AIChartRenderer chartData={chartData} />
-                    </div>
-                )}
-            </div>
-        );
+    const toggleWebSearch = () => {
+        setUseWebSearch(prev => !prev);
     };
 
     return (
-        <div className="flex flex-col h-full bg-white rounded-lg shadow-sm">
-            {/* Navigation and action buttons */}
-            <div className="flex flex-col p-3 border-b">
-                <div className="flex items-center justify-between mb-2">
+        <div className="flex h-screen bg-white">
+            {/* Sidebar */}
+            <div className="w-64 bg-[#f7f7f8] text-gray-800 flex-col h-full shadow-md">
+                <div className="p-3">
                     <button
-                        onClick={() => router.push('/dashboard')}
-                        className="flex items-center text-sm text-gray-600 hover:text-gray-900 transition-colors"
+                        className="w-full flex items-center gap-3 rounded-md border border-gray-300 p-3 text-sm transition-colors hover:bg-gray-100"
+                        onClick={() => router.push('/agent')}
                     >
-                        <ArrowLeft size={16} className="mr-1" />
-                        Back to Dashboard
-                    </button>
-                    <button
-                        onClick={handleSaveChat}
-                        disabled={isSaving || messages.length === 0}
-                        className="flex items-center text-sm bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700 disabled:bg-green-300 transition-colors"
-                    >
-                        {isSaving ? (
-                            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-1"></div>
-                        ) : (
-                            <Save size={16} className="mr-1" />
-                        )}
-                        Save Chat
+                        <Plus size={16} />
+                        <span>New chat</span>
                     </button>
                 </div>
-                <div>
-                    <h1 className="text-xl font-semibold text-gray-800">{title}</h1>
-                    <p className="text-sm text-gray-600 mt-1">
-                        Continuing your conversation about your diabetes data.
-                    </p>
+
+                <div className="flex-1 overflow-auto p-2">
+                    <div className="text-xs text-gray-500 font-medium uppercase px-2 py-2">RECENT CHATS</div>
+                    {/* Current chat title */}
+                    <div className="rounded-md p-2 bg-gray-100 cursor-pointer text-sm">
+                        {title}
+                    </div>
+                </div>
+
+                <div className="border-t border-gray-200 p-3">
+                    <button
+                        className="w-full flex items-center gap-2 rounded-md p-2 text-sm hover:bg-gray-100"
+                        onClick={() => router.push('/dashboard')}
+                    >
+                        <ArrowLeft size={16} />
+                        <span>Back to Dashboard</span>
+                    </button>
                 </div>
             </div>
 
-            {/* Messages container */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                <AnimatePresence>
-                    {messages.length === 0 ? (
-                        <div className="flex items-center justify-center h-full text-gray-500">
-                            <div className="text-center">
-                                <p className="mb-2 text-lg font-medium">Start a conversation</p>
-                                <p className="text-sm">Ask about your blood sugar, request charts, or get insights.</p>
-                            </div>
-                        </div>
-                    ) : (
-                        messages.map((message) => (
-                            <motion.div
-                                key={message.id}
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                exit={{ opacity: 0 }}
-                                className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-                            >
-                                <div
-                                    className={`max-w-[90%] rounded-lg p-4 ${message.sender === 'user'
-                                        ? 'bg-blue-600 text-white prose-strong:text-white prose-headings:text-white'
-                                        : 'bg-gray-100 text-gray-800 prose-strong:text-gray-900 prose-headings:text-gray-900'
-                                        }`}
-                                >
-                                    {renderMessageContent(message.text, message.isTyping)}
-                                    <div
-                                        className={`text-xs mt-2 ${message.sender === 'user' ? 'text-blue-200' : 'text-gray-500'
-                                            }`}
-                                    >
-                                        {message.timestamp}
+            {/* Main chat area */}
+            <div className="flex-1 flex flex-col h-full max-h-screen overflow-hidden relative">
+                <div className="flex-1 overflow-y-auto">
+                    <div className="w-full">
+                        <AnimatePresence>
+                            {messages.length === 0 ? (
+                                <div className="flex items-center justify-center h-full text-gray-600 p-8">
+                                    <div className="text-center mt-8">
+                                        <h1 className="text-3xl font-semibold mb-6">Diabetes AI Assistant</h1>
+                                        <p className="mb-6">Ask about your blood sugar, request charts, or get insights about your health data.</p>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-w-xl mx-auto">
+                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
+                                                <p className="font-medium">Show me my blood sugar trends</p>
+                                            </div>
+                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
+                                                <p className="font-medium">What was my average glucose this week?</p>
+                                            </div>
+                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
+                                                <p className="font-medium">When was my last low blood sugar?</p>
+                                            </div>
+                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
+                                                <p className="font-medium">Create a chart of my glucose patterns</p>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            </motion.div>
-                        ))
-                    )}
-                </AnimatePresence>
-                <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input form */}
-            <div className="border-t p-3">
-                <form onSubmit={handleSubmit} className="relative">
-                    <input
-                        type="text"
-                        value={input}
-                        onChange={(e) => setInput(e.target.value)}
-                        placeholder="Ask about your blood sugar, request a chart, or get insights..."
-                        className="w-full rounded-lg border border-gray-300 pr-12 py-3 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                        disabled={isLoading}
-                    />
-                    <button
-                        type="submit"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 rounded-md bg-transparent text-gray-500 hover:bg-gray-100 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
-                        disabled={isLoading || !input.trim()}
-                    >
-                        {isLoading ? (
-                            <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin"></div>
-                        ) : (
-                            <Send size={18} className="text-blue-600" />
-                        )}
-                    </button>
-
-                    {/* Clear chat button - moved to be more accessible */}
-                    <div className="flex justify-end mt-2">
-                        <button
-                            onClick={clearChatHistory}
-                            className="flex items-center text-xs text-gray-500 hover:text-gray-700"
-                            disabled={isLoading || messages.length === 0}
-                            type="button"
-                        >
-                            <RefreshCw size={12} className="mr-1" />
-                            Clear chat
-                        </button>
+                            ) : (
+                                messages.map((message) => (
+                                    <ChatMessage
+                                        key={message.id}
+                                        id={message.id}
+                                        text={message.text}
+                                        sender={message.sender}
+                                        timestamp={message.timestamp}
+                                        isTyping={message.isTyping}
+                                    />
+                                ))
+                            )}
+                        </AnimatePresence>
+                        <div ref={messagesEndRef} />
                     </div>
-                </form>
+                </div>
+
+                {/* Input form */}
+                <div className="border-t border-gray-300 bg-white">
+                    <div className="max-w-3xl mx-auto p-4">
+                        <form onSubmit={handleSubmit} className="relative">
+                            <div className="flex items-center px-4 py-2 rounded-xl border border-gray-300 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+                                <textarea
+                                    ref={inputRef}
+                                    className="flex-1 max-h-32 outline-none resize-none bg-transparent placeholder:text-gray-500"
+                                    placeholder="Message the AI..."
+                                    value={input}
+                                    onChange={(e) => setInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && !e.shiftKey) {
+                                            e.preventDefault();
+                                            if (input.trim() && !isLoading) {
+                                                handleSubmit(e);
+                                            }
+                                        }
+                                    }}
+                                    rows={1}
+                                ></textarea>
+                                <div className="flex items-center gap-1 ml-2">
+                                    <button
+                                        type="button"
+                                        onClick={toggleWebSearch}
+                                        className={`p-1 rounded-md ${useWebSearch ? 'bg-green-600 text-white' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'} focus:outline-none`}
+                                        title={useWebSearch ? "Web search enabled" : "Enable web search"}
+                                    >
+                                        <Search size={18} />
+                                    </button>
+
+                                    {isLoading ? (
+                                        <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin"></div>
+                                    ) : (
+                                        <button
+                                            type="submit"
+                                            className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 focus:outline-none disabled:opacity-50"
+                                            disabled={!input.trim()}
+                                        >
+                                            <Send size={18} />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </form>
+                        <div className="flex justify-between text-xs text-gray-500 mt-2">
+                            <button
+                                onClick={handleClearChat}
+                                className="flex items-center gap-1 hover:text-gray-700"
+                                disabled={messages.length === 0 || isLoading}
+                            >
+                                <Trash2 size={14} />
+                                <span>Clear chat</span>
+                            </button>
+                            <button
+                                onClick={handleSaveChat}
+                                className="flex items-center gap-1 hover:text-gray-700"
+                                disabled={messages.length === 0 || isLoading || isSaving}
+                            >
+                                <Save size={14} />
+                                <span>{isSaving ? 'Saving...' : 'Save chat'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     );

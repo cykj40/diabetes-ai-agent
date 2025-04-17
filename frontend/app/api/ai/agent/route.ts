@@ -17,41 +17,51 @@ export async function POST(request: NextRequest) {
             token = request.cookies.get('auth_token')?.value;
         }
 
-        if (!token) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
+        // Default to anonymous user if no token
+        let userId = 'default-user';
 
-        // Fetch user information using the token
-        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+        // Try to get user ID if token is available
+        if (token) {
+            try {
+                // Fetch user information using the token
+                const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-        // Validate the token and get user ID
-        const userResponse = await fetch(`${backendUrl}/api/auth/me`, {
-            headers: {
-                'Authorization': `Bearer ${token}`
+                const userResponse = await fetch(`${backendUrl}/api/auth/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (userResponse.ok) {
+                    const userData = await userResponse.json();
+                    if (userData.user?.id) {
+                        userId = userData.user.id;
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching user data:', error);
+                // Continue with default user ID
             }
-        });
-
-        if (!userResponse.ok) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const userData = await userResponse.json();
-        const userId = userData.user?.id;
-
-        if (!userId) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
         // Get the request body
         const body = await request.json();
 
+        // Get the backend URL
+        const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+
         const response = await fetch(`${backendUrl}/api/ai/agent`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${token}`
+                // Pass token if available, but don't require it
+                ...(token && { 'Authorization': `Bearer ${token}` })
             },
-            body: JSON.stringify(body),
+            body: JSON.stringify({
+                message: body.message,
+                sessionId: body.sessionId,
+                useWebSearch: body.useWebSearch || false
+            }),
         });
 
         if (!response.ok) {

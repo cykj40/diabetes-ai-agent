@@ -1,11 +1,8 @@
 'use client';
 
-import React, { useState, useRef, useEffect, ReactNode } from 'react';
-import { Send, RefreshCw, ArrowLeft, Plus, Loader2, Save, Trash2, Search } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import { motion, AnimatePresence } from 'framer-motion';
-import type { Components } from 'react-markdown';
-import AIChartRenderer from './AIChartRenderer';
+import React, { useState, useRef, useEffect } from 'react';
+import { Send, ArrowLeft, Plus, Save, Trash2, Search } from 'lucide-react';
+import { AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import ChatMessage from './ChatMessage';
 

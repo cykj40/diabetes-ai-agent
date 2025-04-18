@@ -29,6 +29,8 @@ ChartJS.register(
     TimeScale
 );
 
+type ScaleType = 'linear' | 'logarithmic' | 'category' | 'time' | 'timeseries';
+
 interface ChartConfig {
     type: 'line' | 'pie';
     data: {
@@ -47,8 +49,13 @@ interface ChartConfig {
             text: string;
         };
         scales?: {
-            x?: { type: string; title?: { display: boolean; text: string } };
-            y?: { title?: { display: boolean; text: string } };
+            x?: {
+                type?: ScaleType;
+                title?: { display: boolean; text: string }
+            };
+            y?: {
+                title?: { display: boolean; text: string }
+            };
         };
     };
 }
@@ -61,31 +68,50 @@ interface AIChartRendererProps {
 export default function AIChartRenderer({ chartData, className = '' }: AIChartRendererProps) {
     try {
         const config: ChartConfig = JSON.parse(chartData);
-        const chartRef = useRef<ChartJS>(null);
+        // Use separate ref for different chart types
+        const lineChartRef = useRef<ChartJS<"line">>(null);
+        const pieChartRef = useRef<ChartJS<"pie">>(null);
 
         useEffect(() => {
             // Update chart on data change
-            if (chartRef.current) {
-                chartRef.current.update();
+            if (config.type === 'line' && lineChartRef.current) {
+                lineChartRef.current.update();
+            } else if (config.type === 'pie' && pieChartRef.current) {
+                pieChartRef.current.update();
             }
-        }, [chartData]);
+        }, [chartData, config.type]);
 
-        const commonProps = {
-            className,
-            ref: chartRef,
-            options: {
-                ...config.options,
-                responsive: true,
-                maintainAspectRatio: false,
-            },
+        // Ensure scales.x.type is set to a valid type if provided
+        if (config.options?.scales?.x?.type) {
+            // Default to 'category' if not a valid scale type
+            const xType = config.options.scales.x.type;
+            if (!['linear', 'logarithmic', 'category', 'time', 'timeseries'].includes(xType)) {
+                config.options.scales.x.type = 'category';
+            }
+        }
+
+        const commonOptions = {
+            ...config.options,
+            responsive: true,
+            maintainAspectRatio: false,
         };
 
         return (
             <div className={`w-full h-[400px] ${className}`}>
                 {config.type === 'line' ? (
-                    <Line {...commonProps} data={config.data} />
+                    <Line
+                        ref={lineChartRef}
+                        data={config.data}
+                        options={commonOptions}
+                        className={className}
+                    />
                 ) : (
-                    <Pie {...commonProps} data={config.data} />
+                    <Pie
+                        ref={pieChartRef}
+                        data={config.data}
+                        options={commonOptions}
+                        className={className}
+                    />
                 )}
             </div>
         );

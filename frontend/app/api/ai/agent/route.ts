@@ -19,11 +19,14 @@ export async function POST(request: NextRequest) {
         // Default to anonymous user if no token
         let userId = 'default-user';
 
+        console.log("[API Route] Auth token exists:", !!token);
+
         // Try to get user ID if token is available
         if (token) {
             try {
                 // Fetch user information using the token
                 const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+                console.log("[API Route] Using backend URL:", backendUrl);
 
                 const userResponse = await fetch(`${backendUrl}/api/auth/me`, {
                     headers: {
@@ -31,10 +34,13 @@ export async function POST(request: NextRequest) {
                     }
                 });
 
+                console.log("[API Route] User auth response status:", userResponse.status);
+
                 if (userResponse.ok) {
                     const userData = await userResponse.json();
                     if (userData.user?.id) {
                         userId = userData.user.id;
+                        console.log("[API Route] Authenticated as user:", userId);
                     }
                 }
             } catch (error) {
@@ -45,11 +51,18 @@ export async function POST(request: NextRequest) {
 
         // Get the request body
         const body = await request.json();
+        console.log("[API Route] Request body:", {
+            message: body.message?.substring(0, 50) + "...",
+            sessionId: body.sessionId,
+            useWebSearch: body.useWebSearch
+        });
 
         // Get the backend URL
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-        const response = await fetch(`${backendUrl}/api/ai/agent`, {
+        console.log("[API Route] Calling backend at:", `${backendUrl}/api/ai/chat`);
+
+        const response = await fetch(`${backendUrl}/api/ai/chat`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -62,6 +75,8 @@ export async function POST(request: NextRequest) {
                 useWebSearch: body.useWebSearch || false
             }),
         });
+
+        console.log("[API Route] Backend response status:", response.status);
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -81,6 +96,13 @@ export async function POST(request: NextRequest) {
         }
 
         const data = await response.json();
+        console.log("[API Route] Backend response structure:",
+            Object.keys(data),
+            "message?", !!data.message,
+            "chatHistory?", Array.isArray(data.chatHistory),
+            "sessionId?", !!data.sessionId
+        );
+
         return NextResponse.json(data);
     } catch (error) {
         console.error('API route error:', error);

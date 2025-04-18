@@ -37,10 +37,10 @@ export class DiabetesAgent {
     private sessionContexts: Map<string, any> = new Map();
 
     constructor() {
-        // Use GPT-4.5 for better agentic execution capabilities
+        // Use GPT-4o for better agentic execution capabilities
         this.llm = new ChatOpenAI({
             temperature: 0.2, // Slightly increased for more creative responses
-            modelName: 'gpt-4.5', // Using GPT-4.5 for better agentic execution
+            modelName: 'gpt-4o', // Using GPT-4o for better agentic execution
             openAIApiKey: process.env.OPENAI_API_KEY
         });
         this.dexcomService = new DexcomService();

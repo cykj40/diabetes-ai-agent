@@ -120,7 +120,9 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
             const cookies = document.cookie.split(';');
             const authCookie = cookies.find(c => c.trim().startsWith('auth_token='));
             const token = authCookie ? authCookie.split('=')[1].trim() : null;
+            console.log("[Chat] Auth token exists:", !!token);
 
+            console.log("[Chat] Sending request to /api/ai/agent");
             const response = await fetch('/api/ai/agent', {
                 method: 'POST',
                 headers: {
@@ -134,19 +136,29 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                 }),
             });
 
+            console.log("[Chat] Response status:", response.status);
+
             if (!response.ok) {
                 throw new Error(`Error: ${response.status}`);
             }
 
             const data = await response.json();
+            console.log("[Chat] API Response:", data);
+            console.log("[Chat] Response structure:",
+                "keys:", Object.keys(data),
+                "message?", typeof data.message,
+                "chatHistory?", Array.isArray(data.chatHistory) ? data.chatHistory.length : "not array"
+            );
 
             // Remove typing indicator
             setMessages((prev) => prev.filter(msg => !msg.isTyping));
 
             // Update messages from chat history if provided
             if (data.chatHistory && Array.isArray(data.chatHistory)) {
+                console.log("[Chat] Using chatHistory from response");
                 setMessages(data.chatHistory);
             } else if (data.message) {
+                console.log("[Chat] Using message from response");
                 // Fallback to adding just the response message
                 const aiMessage: Message = {
                     id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
@@ -155,12 +167,15 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                     timestamp: new Date().toLocaleTimeString(),
                 };
                 setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
+            } else {
+                console.log("[Chat] No usable data in response");
+                throw new Error("Invalid response format from server");
             }
 
             // Reset web search flag after use
             setUseWebSearch(false);
         } catch (error) {
-            console.error('Error sending message:', error);
+            console.error('[Chat] Error sending message:', error);
             // Remove typing indicator
             setMessages((prev) => prev.filter(msg => !msg.isTyping));
 

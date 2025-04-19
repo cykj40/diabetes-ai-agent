@@ -8,6 +8,8 @@ import DexcomStatus from "../../components/DexcomStatus";
 import CurrentGlucoseReading from "../../components/CurrentGlucoseReading";
 import DailyAverageReading from "../../components/DailyAverageReading";
 import TimeInRangeReading from "../../components/TimeInRangeReading";
+import MuscleImpactChart from "../../components/MuscleImpactChart";
+import PelotonMuscleChart from "../../components/PelotonMuscleChart";
 // import WeeklyPatterns from "../../components/WeeklyPatterns";
 import { BsBell } from 'react-icons/bs';
 import { FiSettings, FiActivity, FiUser } from 'react-icons/fi';
@@ -144,6 +146,23 @@ export default function Dashboard() {
                             </ClientOnly>
                         </div>
 
+                        {/* Peloton Data Section - Shows both charts */}
+                        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Muscle Impact Chart (Bar chart) */}
+                            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                                <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
+                                    <MuscleImpactChart days={7} />
+                                </ClientOnly>
+                            </div>
+
+                            {/* Peloton Muscle Chart (Radar chart) */}
+                            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                                <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
+                                    <PelotonMuscleChart period="7_days" />
+                                </ClientOnly>
+                            </div>
+                        </div>
+
                         {/* Weekly Blood Sugar Chart - Commented out until component is available */}
                         {/* <div className="mt-6">
                             <ClientOnly fallback={<div className="h-64 bg-gray-100 animate-pulse rounded"></div>}>
@@ -185,6 +204,22 @@ export default function Dashboard() {
                                 >
                                     <FiActivity size={18} />
                                     <span>Open AI Assistant</span>
+                                </Link>
+                            </div>
+                        </div>
+
+                        {/* Peloton Connection Widget */}
+                        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+                            <div className="p-6">
+                                <h2 className="text-lg font-semibold text-gray-800 mb-2">Peloton Activity</h2>
+                                <p className="text-gray-600 text-sm mb-4">
+                                    Track how your Peloton workouts impact your glucose levels and overall diabetes management.
+                                </p>
+                                <Link
+                                    href="/settings/integrations"
+                                    className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800"
+                                >
+                                    Manage Peloton connection
                                 </Link>
                             </div>
                         </div>

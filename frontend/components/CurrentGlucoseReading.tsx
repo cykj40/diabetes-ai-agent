@@ -30,75 +30,62 @@ export default function CurrentGlucoseReading() {
             setLastAttempt(timestamp);
             console.log(`[${timestamp}] Fetching current Dexcom reading...`);
 
-            // Use the new endpoint specifically for current reading
-            const response = await fetch('http://localhost:3001/api/dexcom/current-reading', {
-                method: 'GET',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                credentials: 'include'
-            });
-
-            console.log(`[${timestamp}] Response status:`, response.status, response.statusText);
-
-            if (!response.ok) {
-                if (response.status === 404) {
-                    setError('No recent glucose readings available');
-                    setCurrentReading(null);
-                    return;
-                }
-
-                const errorText = await response.text();
-                console.error('Error response:', errorText);
-
-                let errorMessage = 'Failed to fetch current glucose reading';
+            // Use our API utility to fetch the reading
+            import('../lib/api').then(async ({ api }) => {
                 try {
-                    const errorData = JSON.parse(errorText);
-                    errorMessage = errorData.message || errorData.error || errorMessage;
-                } catch (e) {
-                    // If we can't parse the error, just use the status text
-                    errorMessage = `Error: ${response.status} ${response.statusText}`;
+                    const data = await api.dexcom.getCurrentReading() as {
+                        value: number;
+                        trend: string;
+                        timestamp: string;
+                        source?: 'api' | 'share' | 'mock';
+                    };
+
+                    console.log(`[${timestamp}] Current reading:`, data);
+
+                    // Validate the reading data
+                    if (!data || typeof data.value !== 'number' || !data.trend || !data.timestamp) {
+                        console.error('Invalid reading data:', data);
+                        setError('Received invalid glucose reading data');
+                        setCurrentReading(null);
+                        return;
+                    }
+
+                    // Calculate how old the data is
+                    const readingTime = new Date(data.timestamp).getTime();
+                    const currentTime = new Date().getTime();
+                    const ageInMinutes = Math.round((currentTime - readingTime) / (60 * 1000));
+                    setDataAge(ageInMinutes);
+
+                    // Flag as delayed if more than 15 minutes old (Dexcom API has a delay)
+                    const isDelayed = ageInMinutes > 15;
+
+                    // Format the reading data
+                    const reading: GlucoseReading = {
+                        value: data.value,
+                        trend: data.trend,
+                        timestamp: data.timestamp,
+                        isDelayed,
+                        source: data.source
+                    };
+
+                    // Update the current reading
+                    setCurrentReading(reading);
+                } catch (apiError) {
+                    console.error('Error fetching current reading:', apiError);
+                    setError(apiError instanceof Error ? apiError.message : 'An unknown error occurred');
+                } finally {
+                    setLoading(false);
+                    setRefreshing(false);
                 }
-
-                setError(errorMessage);
-                return;
-            }
-
-            const data = await response.json();
-            console.log(`[${timestamp}] Current reading:`, data);
-
-            // Validate the reading data
-            if (!data || typeof data.value !== 'number' || !data.trend || !data.timestamp) {
-                console.error('Invalid reading data:', data);
-                setError('Received invalid glucose reading data');
-                setCurrentReading(null);
-                return;
-            }
-
-            // Calculate how old the data is
-            const readingTime = new Date(data.timestamp).getTime();
-            const currentTime = new Date().getTime();
-            const ageInMinutes = Math.round((currentTime - readingTime) / (60 * 1000));
-            setDataAge(ageInMinutes);
-
-            // Flag as delayed if more than 15 minutes old (Dexcom API has a delay)
-            const isDelayed = ageInMinutes > 15;
-
-            // Format the reading data
-            const reading: GlucoseReading = {
-                value: data.value,
-                trend: data.trend,
-                timestamp: data.timestamp,
-                isDelayed,
-                source: data.source
-            };
-
-            // Update the current reading
-            setCurrentReading(reading);
+            }).catch(importError => {
+                console.error('Error importing API module:', importError);
+                setError('Failed to load API utilities');
+                setLoading(false);
+                setRefreshing(false);
+            });
         } catch (error) {
             console.error('Error fetching current reading:', error);
             setError(error instanceof Error ? error.message : 'An unknown error occurred');
-        } finally {
             setLoading(false);
             setRefreshing(false);
         }

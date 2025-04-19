@@ -22,6 +22,8 @@ import { debounce } from 'lodash';
 import aiRoutes from './routes/ai.routes';
 import axios from 'axios';
 import authRoutes from './routes/auth.routes';
+import pelotonRoutes from './routes/peloton.routes';
+import { authenticate } from './middleware/auth.middleware';
 
 // Extend the Session interface to include our custom properties
 declare module '@fastify/session' {
@@ -81,13 +83,16 @@ app.register(fastifyCors, {
         process.env.FRONTEND_URL || 'http://localhost:3000',
         'http://127.0.0.1:3000',
         'http://localhost:3000',
+        'http://localhost:3001',
+        'http://127.0.0.1:3001',
         'http://127.0.0.1:5500',
-        'http://localhost:3001'
+        'http://localhost:5500'
     ],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-    exposedHeaders: ['Content-Range', 'X-Content-Range']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With', 'X-PINGOTHER'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range'],
+    maxAge: 86400
 });
 
 app.register(fastifyCookie);
@@ -122,6 +127,9 @@ app.register(aiRoutes, { prefix: '/api/ai' });
 
 // Register auth routes
 app.register(authRoutes, { prefix: '/api/auth' });
+
+// Register Peloton routes
+app.register(pelotonRoutes, { prefix: '/api/peloton' });
 
 // Define route schemas
 const StatusResponse = Type.Object({
@@ -953,6 +961,45 @@ app.get('/api/dexcom/current-reading', {
     }
 });
 
+// Add more detailed CORS logging
+app.addHook('onRequest', (request, reply, done) => {
+    const origin = request.headers.origin;
+    const method = request.method;
+
+    if (origin) {
+        console.log(`[CORS] Request from origin: ${origin}, method: ${method}, URL: ${request.url}`);
+    }
+
+    done();
+});
+
+// Add authentication middleware to all routes except those specifically excluded
+app.addHook('preHandler', async (request, reply) => {
+    // Skip auth for certain public routes
+    const publicRoutes = [
+        '/health',
+        '/api/healthcheck',
+        '/auth/dexcom/login',
+        '/auth/dexcom/callback',
+        '/auth/dexcom/status',
+        '/api/auth/signin',
+        '/api/auth/signup'
+    ];
+
+    // Check if the current route is public
+    if (publicRoutes.some(route => request.url.startsWith(route))) {
+        return;
+    }
+
+    // Apply authentication middleware
+    await authenticate(request, reply);
+});
+
+// Add a simple health check endpoint that doesn't require auth
+app.get('/api/healthcheck', (request, reply) => {
+    reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Start server
 const start = async () => {
     try {
@@ -987,6 +1034,12 @@ const start = async () => {
         app.log.info('- POST /api/ai/chat');
         app.log.info('- GET /api/ai/chat-history/:sessionId?');
         app.log.info('- DELETE /api/ai/chat-history/:sessionId?');
+        app.log.info('\nPeloton:');
+        app.log.info('- GET /api/peloton/test-connection');
+        app.log.info('- GET /api/peloton/recent-workouts');
+        app.log.info('- GET /api/peloton/muscle-impact');
+        app.log.info('- GET /api/peloton/muscle-activity');
+        app.log.info('- GET /api/peloton/muscle-chart');
     } catch (err) {
         app.log.error(err);
         process.exit(1);

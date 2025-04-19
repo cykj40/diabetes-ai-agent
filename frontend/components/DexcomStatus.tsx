@@ -1,86 +1,38 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { FiActivity } from 'react-icons/fi';
+import { useState, useEffect } from 'react';
+import { api } from '../lib/api';
 
-export default function DexcomStatus() {
-    const [isAuthenticated, setIsAuthenticated] = useState(false);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+const DexcomStatus = () => {
+    const [status, setStatus] = useState<'connected' | 'disconnected' | 'loading'>('loading');
 
     useEffect(() => {
-        // Check Dexcom authentication status
-        console.log('Checking Dexcom auth status...');
-        fetch('http://localhost:3001/auth/dexcom/status', {
-            credentials: 'include', // Important for session cookies
-            headers: {
-                'Accept': 'application/json'
+        const checkDexcomStatus = async () => {
+            try {
+                // Try to fetch the current Dexcom reading as a way to check connection
+                await api.dexcom.getCurrentReading();
+                setStatus('connected');
+            } catch (error) {
+                console.error('Error checking Dexcom status:', error);
+                setStatus('disconnected');
             }
-        })
-            .then(res => {
-                console.log('Status response:', res.status);
-                if (!res.ok) {
-                    throw new Error(`HTTP error! status: ${res.status}`);
-                }
-                return res.json();
-            })
-            .then(data => {
-                console.log('Auth status data:', data);
-                setIsAuthenticated(data.isAuthenticated);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error('Error checking Dexcom auth status:', err);
-                setError(err.message);
-                setLoading(false);
-            });
+        };
+
+        checkDexcomStatus();
     }, []);
 
-    const handleDexcomLogin = () => {
-        // Direct the user to the backend's Dexcom login endpoint
-        console.log('Redirecting to Dexcom login...');
-        window.location.href = 'http://localhost:3001/auth/dexcom/login';
-    };
-
-    if (loading) {
-        return (
-            <div className="flex items-center space-x-2">
-                <FiActivity className="animate-spin" />
-                <span>Checking connection...</span>
-            </div>
-        );
-    }
-
-    if (error) {
-        return (
-            <div className="flex items-center space-x-2 text-red-600">
-                <span>Error: {error}</span>
-                <button
-                    onClick={() => window.location.reload()}
-                    className="text-blue-600 hover:underline"
-                >
-                    Retry
-                </button>
-            </div>
-        );
+    if (status === 'loading') {
+        return <span className="text-gray-500 text-sm">Loading...</span>;
     }
 
     return (
-        <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-                <div className={`w-2 h-2 rounded-full ${isAuthenticated ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                <span className="text-sm text-gray-600">
-                    {isAuthenticated ? 'Dexcom Connected' : 'Dexcom Disconnected'}
-                </span>
-            </div>
-
-            {/* Always show a button - either Connect or Reconnect */}
-            <button
-                onClick={handleDexcomLogin}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-                {isAuthenticated ? 'Reconnect Dexcom' : 'Connect Dexcom'}
-            </button>
+        <div className="flex items-center">
+            <div className={`w-2 h-2 rounded-full mr-2 ${status === 'connected' ? 'bg-green-500' : 'bg-red-500'}`}></div>
+            <span className="text-xs text-gray-500">
+                {status === 'connected' ? 'Connected to Dexcom' : 'Dexcom Not Connected'}
+            </span>
         </div>
     );
-} 
+};
+
+export default DexcomStatus; 

@@ -64,3 +64,17 @@ model DexcomToken {
 
     @@index([userId])
 }
+
+model PelotonIntegration {
+    id            String   @id @default(uuid())
+    userId        String   @unique
+    username      String?
+    password      String?
+    sessionCookie String?
+    isActive      Boolean  @default(false)
+    lastUpdated   DateTime @default(now())
+    createdAt     DateTime @default(now())
+    updatedAt     DateTime @updatedAt
+
+    @@index([userId])
+}

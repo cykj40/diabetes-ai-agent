@@ -3,6 +3,7 @@ import { PelotonClient, getPelotonSessionCookie } from '../tools/peloton/peloton
 import { getMuscleImpactTool } from '../tools/peloton/muscleImpactTool';
 import { getFetchPelotonWorkoutDataTool } from '../tools/peloton/fetchPelotonWorkoutDataTool';
 import { getTestPelotonConnectionTool } from '../tools/peloton/testConnectionTool';
+import { getUserPelotonSessionCookie, savePelotonCredentials, deletePelotonIntegration } from '../services/pelotonService';
 
 // Define request query parameter interfaces
 interface RecentWorkoutsQuery {
@@ -17,32 +18,9 @@ interface MuscleActivityQuery {
     period?: '7_days' | '30_days';
 }
 
-// Helper function to get a session cookie (from env or fresh login)
-async function getSessionCookie(): Promise<string | null> {
-    // First try using the stored cookie
-    let sessionCookie = process.env.PELOTON_SESSION_COOKIE;
-
-    if (!sessionCookie) {
-        console.log('No stored Peloton session cookie found, attempting to get a fresh one');
-        return getPelotonSessionCookie();
-    }
-
-    // Test if the stored cookie is valid
-    try {
-        const client = new PelotonClient(sessionCookie);
-        const test = await client.testConnection();
-
-        if (!test.success) {
-            console.log('Stored Peloton session cookie is invalid, getting a fresh one');
-            const freshCookie = await getPelotonSessionCookie();
-            return freshCookie;
-        }
-
-        return sessionCookie;
-    } catch (error) {
-        console.error('Error testing Peloton session cookie:', error);
-        return getPelotonSessionCookie();
-    }
+interface PelotonCredentialsBody {
+    username: string;
+    password: string;
 }
 
 export default async function pelotonRoutes(fastify: FastifyInstance) {
@@ -71,6 +49,76 @@ export default async function pelotonRoutes(fastify: FastifyInstance) {
             return reply.code(500).send({
                 success: false,
                 message: `Error testing Peloton connection: ${error.message}`
+            });
+        }
+    });
+
+    // Save Peloton credentials
+    fastify.post<{ Body: PelotonCredentialsBody }>('/credentials', async (request, reply) => {
+        try {
+            // Extract user ID from authorization header
+            const authHeader = request.headers.authorization;
+            let userId = 'default-user';
+
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            }
+
+            const { username, password } = request.body;
+
+            if (!username || !password) {
+                return reply.code(400).send({
+                    success: false,
+                    message: "Username and password are required"
+                });
+            }
+
+            const success = await savePelotonCredentials(userId, username, password);
+
+            if (!success) {
+                return reply.code(401).send({
+                    success: false,
+                    message: "Failed to authenticate with Peloton using the provided credentials"
+                });
+            }
+
+            return {
+                success: true,
+                message: "Peloton credentials saved successfully"
+            };
+        } catch (error: any) {
+            console.error('Error saving Peloton credentials:', error);
+            return reply.code(500).send({
+                success: false,
+                message: `Error saving Peloton credentials: ${error.message}`
+            });
+        }
+    });
+
+    // Delete Peloton integration
+    fastify.delete('/credentials', async (request, reply) => {
+        try {
+            // Extract user ID from authorization header
+            const authHeader = request.headers.authorization;
+            let userId = 'default-user';
+
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
+            }
+
+            const success = await deletePelotonIntegration(userId);
+
+            return {
+                success,
+                message: success
+                    ? "Peloton integration deleted successfully"
+                    : "Failed to delete Peloton integration"
+            };
+        } catch (error: any) {
+            console.error('Error deleting Peloton integration:', error);
+            return reply.code(500).send({
+                success: false,
+                message: `Error deleting Peloton integration: ${error.message}`
             });
         }
     });
@@ -132,12 +180,12 @@ export default async function pelotonRoutes(fastify: FastifyInstance) {
             const daysNum = parseInt(days, 10);
 
             // We want to directly get the raw data without the formatted text
-            const sessionCookie = await getSessionCookie();
+            const sessionCookie = await getUserPelotonSessionCookie(userId);
 
             if (!sessionCookie) {
                 return reply.code(400).send({
                     success: false,
-                    message: "Peloton session cookie not configured"
+                    message: "Peloton session cookie not configured. Please connect your Peloton account in settings."
                 });
             }
 
@@ -251,12 +299,12 @@ export default async function pelotonRoutes(fastify: FastifyInstance) {
 
             const { period = '7_days' } = request.query;
 
-            const sessionCookie = await getSessionCookie();
+            const sessionCookie = await getUserPelotonSessionCookie(userId);
 
             if (!sessionCookie) {
                 return reply.code(400).send({
                     success: false,
-                    message: "Peloton session cookie not configured"
+                    message: "Peloton session cookie not configured. Please connect your Peloton account in settings."
                 });
             }
 
@@ -301,7 +349,7 @@ export default async function pelotonRoutes(fastify: FastifyInstance) {
             const { period = '7_days' } = request.query;
             const days = period === '7_days' ? 7 : 30;
 
-            const sessionCookie = await getSessionCookie();
+            const sessionCookie = await getUserPelotonSessionCookie(userId);
 
             if (!sessionCookie) {
                 return reply.code(400).send({

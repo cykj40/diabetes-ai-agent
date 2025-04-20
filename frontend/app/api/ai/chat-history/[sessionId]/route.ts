@@ -1,10 +1,13 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 
-export async function GET(
-    request: NextRequest,
-    { params }: { params: { sessionId: string } }
-) {
+type Params = {
+    params: {
+        sessionId: string;
+    };
+};
+
+export async function GET(request: NextRequest, { params }: Params) {
     try {
         const sessionId = params.sessionId;
 
@@ -85,10 +88,7 @@ export async function GET(
     }
 }
 
-export async function DELETE(
-    request: NextRequest,
-    { params }: { params: { sessionId: string } }
-) {
+export async function DELETE(request: NextRequest, { params }: Params) {
     try {
         const sessionId = params.sessionId;
 

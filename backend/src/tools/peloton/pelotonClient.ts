@@ -1,6 +1,17 @@
-import axios from 'axios';
+import axios, { AxiosError, AxiosRequestConfig, AxiosResponse } from 'axios';
 
 const PELOTON_API_URL = 'https://api.onepeloton.com';
+// Add rate limiting constants
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1 second
+const MAX_RETRY_DELAY = 60000; // 1 minute
+
+// Simple in-memory cache
+interface CacheItem {
+    data: any;
+    expiry: number;
+}
+const cache: Record<string, CacheItem> = {};
 
 export interface PelotonWorkout {
     id: string;
@@ -19,8 +30,80 @@ export interface MuscleGroupData {
     [muscle: string]: number;
 }
 
+/**
+ * Makes an API request with retry logic for rate limiting
+ * @param config Axios request configuration
+ * @param retries Number of retries attempted so far
+ * @param cacheKey Optional cache key for the request
+ * @param cacheTTL Cache time-to-live in milliseconds, defaults to 5 minutes
+ */
+async function makeApiRequest<T>(
+    config: AxiosRequestConfig,
+    retries = 0,
+    cacheKey?: string,
+    cacheTTL = 5 * 60 * 1000
+): Promise<T> {
+    // Check cache if a cache key is provided
+    if (cacheKey && cache[cacheKey] && cache[cacheKey].expiry > Date.now()) {
+        console.log(`Cache hit for: ${cacheKey}`);
+        return cache[cacheKey].data;
+    }
+
+    try {
+        // Log the request details
+        console.log(`API Request: ${config.method?.toUpperCase()} ${config.url}`);
+        console.log(`Params: ${JSON.stringify(config.params || {})}`);
+        console.log(`Headers: ${JSON.stringify(Object.keys(config.headers || {}))}`);
+
+        const response = await axios(config);
+
+        // Log the response status
+        console.log(`API Response: ${response.status} ${response.statusText}`);
+
+        // Cache the response if a cache key is provided
+        if (cacheKey) {
+            cache[cacheKey] = {
+                data: response.data,
+                expiry: Date.now() + cacheTTL
+            };
+            console.log(`Cached response for: ${cacheKey}`);
+        }
+
+        return response.data;
+    } catch (error) {
+        const axiosError = error as AxiosError;
+
+        // Log detailed error information
+        console.error(`API Error: ${axiosError.message}`);
+        if (axiosError.response) {
+            console.error(`Status: ${axiosError.response.status}`);
+            console.error(`Data: ${JSON.stringify(axiosError.response.data)}`);
+        }
+
+        // Handle rate limiting (HTTP 429)
+        if (axiosError.response?.status === 429 && retries < MAX_RETRIES) {
+            const retryDelay = Math.min(
+                INITIAL_RETRY_DELAY * Math.pow(2, retries),
+                MAX_RETRY_DELAY
+            );
+
+            console.log(`Rate limited. Retrying in ${retryDelay}ms (Attempt ${retries + 1}/${MAX_RETRIES})`);
+
+            // Wait for the calculated delay
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+
+            // Retry the request
+            return makeApiRequest<T>(config, retries + 1, cacheKey, cacheTTL);
+        }
+
+        // Handle auth errors or other errors
+        throw error;
+    }
+}
+
 export class PelotonClient {
     private sessionCookie: string;
+    private userId?: string;
 
     constructor(sessionCookie: string) {
         this.sessionCookie = sessionCookie;
@@ -30,28 +113,53 @@ export class PelotonClient {
         try {
             console.log(`Fetching ${limit} recent Peloton workouts`);
 
-            const response = await axios.get(`${PELOTON_API_URL}/api/user/me/workouts`, {
+            // Ensure we have a user ID
+            if (!this.userId) {
+                // Get the user ID if we don't already have it
+                const connectionTest = await this.testConnection();
+                if (!connectionTest.success || !connectionTest.userId) {
+                    throw new Error("Could not get user ID - please check Peloton authentication");
+                }
+                this.userId = connectionTest.userId;
+            }
+
+            // Use the correct endpoint format with user ID
+            const cacheKey = `recent_workouts_${this.userId}_${limit}`;
+            const config: AxiosRequestConfig = {
+                method: 'GET',
+                url: `${PELOTON_API_URL}/api/user/${this.userId}/workouts`,
                 params: {
                     limit,
-                    joins: 'ride,instructor',
                     page: 0,
+                    joins: 'ride,ride.instructor',
                     sort_by: '-created'
                 },
                 headers: {
                     Cookie: `peloton_session_id=${this.sessionCookie}`,
                     'User-Agent': 'DiabetesAgentAI/1.0',
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json'
+                    'Accept': 'application/json',
+                    'peloton-platform': 'web'
                 },
-            });
+            };
 
-            if (!response.data || !response.data.data) {
-                throw new Error('Unexpected response format from Peloton API');
+            // Make the request and get the full response data
+            const response = await makeApiRequest<any>(config, 0, cacheKey);
+
+            // Log the structure of the response for debugging
+            console.log('Response keys:', Object.keys(response));
+            console.log('Data property exists:', !!response.data);
+
+            // Handle different response formats
+            const workoutsData = response.data || [];
+
+            if (!workoutsData || !Array.isArray(workoutsData)) {
+                console.error('Unexpected response format:', JSON.stringify(response));
+                throw new Error('Unexpected response format from Peloton API - data is not an array');
             }
 
-            console.log(`Successfully fetched ${response.data.data.length} workouts`);
+            console.log(`Successfully fetched ${workoutsData.length} workouts`);
 
-            return response.data.data.map((workout: any) => ({
+            return workoutsData.map((workout: any) => ({
                 id: workout.id,
                 name: workout.ride?.title || 'Unknown Workout',
                 duration: workout.ride?.duration || 0,
@@ -65,7 +173,7 @@ export class PelotonClient {
             }));
         } catch (error) {
             console.error('Error fetching Peloton workouts:', error);
-            throw new Error('Failed to fetch Peloton workouts');
+            throw new Error(`Failed to fetch Peloton workouts: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }
     }
 
@@ -293,28 +401,62 @@ export class PelotonClient {
      * Test the connection to the Peloton API
      * @returns Object indicating success status and details
      */
-    async testConnection(): Promise<{ success: boolean; details: string }> {
+    async testConnection(): Promise<{ success: boolean; details: string, userId?: string }> {
         try {
-            const response = await axios.get(`${PELOTON_API_URL}/api/user/me`, {
+            // First try /api/me endpoint
+            const meConfig: AxiosRequestConfig = {
+                method: 'GET',
+                url: `${PELOTON_API_URL}/api/me`,
+                headers: {
+                    Cookie: `peloton_session_id=${this.sessionCookie}`,
+                    'User-Agent': 'DiabetesAgentAI/1.0',
+                    'Accept': 'application/json',
+                    'peloton-platform': 'web'
+                }
+            };
+
+            try {
+                const meResponse = await makeApiRequest<any>(meConfig);
+                if (meResponse && meResponse.username) {
+                    const username = meResponse.username || 'unknown';
+                    const userId = meResponse.id;
+                    this.userId = userId; // Store user ID in the client
+                    return {
+                        success: true,
+                        details: `Successfully connected to Peloton API as user: ${username}`,
+                        userId: userId
+                    };
+                }
+            } catch (error) {
+                console.log('First endpoint test failed, trying alternative endpoint...');
+            }
+
+            // If first endpoint fails, try /auth/check_session
+            const sessionConfig: AxiosRequestConfig = {
+                method: 'GET',
+                url: `${PELOTON_API_URL}/auth/check_session`,
                 headers: {
                     Cookie: `peloton_session_id=${this.sessionCookie}`,
                     'User-Agent': 'DiabetesAgentAI/1.0',
                     'Accept': 'application/json'
                 }
-            });
+            };
 
-            if (response.status === 200 && response.data) {
-                const username = response.data.username || 'unknown';
+            const sessionResponse = await makeApiRequest<any>(sessionConfig);
+            if (sessionResponse && (sessionResponse.user_id || sessionResponse.user)) {
+                const userId = sessionResponse.user_id || sessionResponse.user;
+                this.userId = userId; // Store user ID in the client
                 return {
                     success: true,
-                    details: `Successfully connected to Peloton API as user: ${username}`
-                };
-            } else {
-                return {
-                    success: false,
-                    details: `User profile API call returned status: ${response.status}`
+                    details: 'Successfully connected to Peloton API using session check',
+                    userId: userId
                 };
             }
+
+            return {
+                success: false,
+                details: 'Could not verify connection with any Peloton API endpoint'
+            };
         } catch (error: any) {
             const errorMessage = error.response?.data?.message || error.message || 'Unknown error';
             return {
@@ -340,22 +482,31 @@ export async function getPelotonSessionCookie(): Promise<string | null> {
             return null;
         }
 
-        const response = await axios.post(`${PELOTON_API_URL}/auth/login`, {
-            username_or_email: username,
-            password: password
-        }, {
+        // Add jitter to prevent multiple server instances from hitting the API at exactly the same time
+        const jitter = Math.floor(Math.random() * 2000); // Random delay up to 2 seconds
+        await new Promise(resolve => setTimeout(resolve, jitter));
+
+        const config: AxiosRequestConfig = {
+            method: 'POST',
+            url: `${PELOTON_API_URL}/auth/login`,
+            data: {
+                username_or_email: username,
+                password: password
+            },
             headers: {
                 'Content-Type': 'application/json',
                 'User-Agent': 'DiabetesAgentAI/1.0'
             }
-        });
+        };
 
-        if (!response.data || !response.data.session_id) {
+        const response = await makeApiRequest<any>(config);
+
+        if (!response || !response.session_id) {
             console.error('Failed to get session ID from Peloton response');
             return null;
         }
 
-        const sessionId = response.data.session_id;
+        const sessionId = response.session_id;
         console.log('Successfully retrieved new Peloton session cookie');
         return sessionId;
     } catch (error) {

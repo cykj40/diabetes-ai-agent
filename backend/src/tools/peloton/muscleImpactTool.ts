@@ -1,6 +1,7 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { PelotonClient } from './pelotonClient';
+import { getUserPelotonSessionCookie } from '../../services/pelotonService';
 
 /**
  * Creates a tool for analyzing muscle impact from Peloton workouts
@@ -16,7 +17,7 @@ export function getMuscleImpactTool(userId: string): DynamicStructuredTool {
         }),
         func: async ({ days = 7 }) => {
             try {
-                const sessionCookie = process.env.PELOTON_SESSION_COOKIE;
+                const sessionCookie = await getUserPelotonSessionCookie(userId);
 
                 if (!sessionCookie) {
                     return "Peloton session cookie not configured. Please connect your Peloton account in settings.";

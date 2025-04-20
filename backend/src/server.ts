@@ -24,6 +24,7 @@ import axios from 'axios';
 import authRoutes from './routes/auth.routes';
 import pelotonRoutes from './routes/peloton.routes';
 import { authenticate } from './middleware/auth.middleware';
+import { rateLimitPelotonRequests } from './middleware/rate-limit.middleware';
 
 // Extend the Session interface to include our custom properties
 declare module '@fastify/session' {
@@ -973,6 +974,13 @@ app.addHook('onRequest', (request, reply, done) => {
     done();
 });
 
+// Add rate limiting middleware for Peloton endpoints
+app.addHook('preHandler', async (request, reply) => {
+    if (request.url.includes('/peloton')) {
+        await rateLimitPelotonRequests(request, reply);
+    }
+});
+
 // Add authentication middleware to all routes except those specifically excluded
 app.addHook('preHandler', async (request, reply) => {
     // Skip auth for certain public routes
@@ -998,6 +1006,89 @@ app.addHook('preHandler', async (request, reply) => {
 // Add a simple health check endpoint that doesn't require auth
 app.get('/api/healthcheck', (request, reply) => {
     reply.send({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Add the Dexcom direct auth endpoint
+app.post('/auth/dexcom/direct', async (request: FastifyRequest<{ Body: { username: string; password: string } }>, reply: FastifyReply) => {
+    try {
+        const { username, password } = request.body;
+
+        // Validate input
+        if (!username || !password) {
+            return reply.code(400).send({
+                success: false,
+                message: 'Username and password are required'
+            });
+        }
+
+        app.log.info('Attempting direct Dexcom authentication');
+
+        // Set environment variables temporarily for this request
+        process.env.DEXCOM_SHARE_USERNAME = username;
+        process.env.DEXCOM_SHARE_PASSWORD = password;
+
+        // Try to get a session ID with these credentials
+        const sessionId = await dexcomService.getShareSessionId();
+
+        // Clear the environment variables
+        process.env.DEXCOM_SHARE_USERNAME = undefined;
+        process.env.DEXCOM_SHARE_PASSWORD = undefined;
+
+        if (!sessionId) {
+            app.log.error('Failed to authenticate with Dexcom Share API');
+            return reply.code(401).send({
+                success: false,
+                message: 'Failed to authenticate with Dexcom Share. Check your credentials.'
+            });
+        }
+
+        // Credentials worked! Save them to the permanent env file
+        try {
+            const envFile = path.join(__dirname, '..', '.env');
+            let envContent = fs.readFileSync(envFile, 'utf8');
+
+            // Update DEXCOM_SHARE_USERNAME in .env
+            const usernameRegex = /DEXCOM_SHARE_USERNAME=.*/;
+            if (usernameRegex.test(envContent)) {
+                envContent = envContent.replace(usernameRegex, `DEXCOM_SHARE_USERNAME=${username}`);
+            } else {
+                envContent += `\nDEXCOM_SHARE_USERNAME=${username}`;
+            }
+
+            // Update DEXCOM_SHARE_PASSWORD in .env
+            const passwordRegex = /DEXCOM_SHARE_PASSWORD=.*/;
+            if (passwordRegex.test(envContent)) {
+                envContent = envContent.replace(passwordRegex, `DEXCOM_SHARE_PASSWORD=${password}`);
+            } else {
+                envContent += `\nDEXCOM_SHARE_PASSWORD=${password}`;
+            }
+
+            // Write the updated content back to the .env file
+            fs.writeFileSync(envFile, envContent);
+            app.log.info('Saved Dexcom Share credentials to .env file');
+
+            // Set the env vars again for the current process
+            process.env.DEXCOM_SHARE_USERNAME = username;
+            process.env.DEXCOM_SHARE_PASSWORD = password;
+
+            return reply.send({
+                success: true,
+                message: 'Successfully authenticated with Dexcom Share'
+            });
+        } catch (fsError) {
+            app.log.error(fsError, 'Error saving credentials to .env file');
+            return reply.code(500).send({
+                success: false,
+                message: 'Authentication successful, but failed to save credentials'
+            });
+        }
+    } catch (error) {
+        app.log.error(error, 'Error in direct Dexcom authentication endpoint');
+        return reply.code(500).send({
+            success: false,
+            message: 'Internal server error during authentication'
+        });
+    }
 });
 
 // Start server

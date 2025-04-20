@@ -1,13 +1,14 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 
 interface DexcomAuthProps {
     onAuthSuccess?: () => void;
 }
 
-export default function DexcomAuth({ onAuthSuccess }: DexcomAuthProps) {
+// Create a component that uses search params inside Suspense
+function DexcomAuthCallback({ onAuthSuccess }: { onAuthSuccess?: () => void }) {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const router = useRouter();
@@ -46,7 +47,14 @@ export default function DexcomAuth({ onAuthSuccess }: DexcomAuthProps) {
         }
     };
 
+    return error ? <div className="w-full p-4 text-red-700 bg-red-100 rounded-md">{error}</div> : null;
+}
+
+export default function DexcomAuth({ onAuthSuccess }: DexcomAuthProps) {
+    const [isLoading, setIsLoading] = useState(false);
+
     const handleConnect = () => {
+        setIsLoading(true);
         window.location.href = '/api/dexcom/auth';
     };
 
@@ -54,11 +62,10 @@ export default function DexcomAuth({ onAuthSuccess }: DexcomAuthProps) {
         <div className="flex flex-col items-center gap-4 p-6 bg-white rounded-lg shadow-md">
             <h2 className="text-2xl font-semibold text-gray-800">Connect Your Dexcom</h2>
 
-            {error && (
-                <div className="w-full p-4 text-red-700 bg-red-100 rounded-md">
-                    {error}
-                </div>
-            )}
+            {/* Wrap the component that uses useSearchParams in Suspense */}
+            <Suspense fallback={<div>Loading authorization...</div>}>
+                <DexcomAuthCallback onAuthSuccess={onAuthSuccess} />
+            </Suspense>
 
             <button
                 onClick={handleConnect}

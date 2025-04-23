@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { api } from '../lib/api';
 
 type ConnectionStatus = {
-    clarity: 'connected' | 'disconnected' | 'loading';
     share: 'connected' | 'disconnected' | 'loading';
 };
 
@@ -17,52 +16,29 @@ type GlucoseReading = {
 
 const DexcomStatus = () => {
     const [status, setStatus] = useState<ConnectionStatus>({
-        clarity: 'loading',
         share: 'loading'
     });
+    const [isRedirecting, setIsRedirecting] = useState(false);
 
     useEffect(() => {
         const checkDexcomStatus = async () => {
             try {
-                // Fetch current reading - this will check both sources
+                // Fetch current reading
                 const reading = await api.dexcom.getCurrentReading() as GlucoseReading;
 
-                // Check which API source returned the data
-                if (reading && reading.source) {
-                    if (reading.source === 'share') {
-                        setStatus({
-                            clarity: 'disconnected',
-                            share: 'connected'
-                        });
-                    } else if (reading.source === 'api') {
-                        setStatus({
-                            clarity: 'connected',
-                            share: 'disconnected'
-                        });
-                    } else {
-                        // If source is 'mock', both are disconnected
-                        setStatus({
-                            clarity: 'disconnected',
-                            share: 'disconnected'
-                        });
-                    }
-                } else if (reading) {
-                    // If source is not specified but we have a reading, assume Share is connected
+                // Check if we have a valid reading
+                if (reading && (reading.source === 'share' || reading.source === 'api' || !reading.source)) {
                     setStatus({
-                        clarity: 'disconnected',
                         share: 'connected'
                     });
                 } else {
-                    // No reading available
                     setStatus({
-                        clarity: 'disconnected',
                         share: 'disconnected'
                     });
                 }
             } catch (error) {
                 console.error('Error checking Dexcom status:', error);
                 setStatus({
-                    clarity: 'disconnected',
                     share: 'disconnected'
                 });
             }
@@ -71,24 +47,31 @@ const DexcomStatus = () => {
         checkDexcomStatus();
     }, []);
 
-    if (status.clarity === 'loading' && status.share === 'loading') {
+    const handleRefreshDexcom = () => {
+        setIsRedirecting(true);
+        // Use the existing API route that properly handles OAuth flow
+        window.location.href = '/api/dexcom/auth';
+    };
+
+    if (status.share === 'loading') {
         return <span className="text-gray-500 text-sm">Loading...</span>;
     }
 
     return (
         <div className="flex flex-col items-start gap-1">
             <div className="flex items-center">
-                <div className={`w-2 h-2 rounded-full mr-2 ${status.clarity === 'connected' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-                <span className="text-xs text-gray-500">
-                    {status.clarity === 'connected' ? 'Dexcom Clarity Connected' : 'Dexcom Clarity Not Connected'}
-                </span>
-            </div>
-            <div className="flex items-center">
                 <div className={`w-2 h-2 rounded-full mr-2 ${status.share === 'connected' ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 <span className="text-xs text-gray-500">
-                    {status.share === 'connected' ? 'Dexcom Share Connected' : 'Dexcom Share Not Connected'}
+                    {status.share === 'connected' ? 'Dexcom Connected' : 'Dexcom Not Connected'}
                 </span>
             </div>
+            <button
+                onClick={handleRefreshDexcom}
+                disabled={isRedirecting}
+                className={`mt-2 px-2 py-1 text-xs ${isRedirecting ? 'bg-gray-400' : 'bg-blue-500 hover:bg-blue-600'} text-white rounded transition-colors`}
+            >
+                {isRedirecting ? 'Redirecting...' : 'Reconnect Dexcom'}
+            </button>
         </div>
     );
 };

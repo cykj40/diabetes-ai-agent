@@ -54,15 +54,16 @@ export async function POST(request: NextRequest) {
         console.log("[API Route] Request body:", {
             message: body.message?.substring(0, 50) + "...",
             sessionId: body.sessionId,
-            useWebSearch: body.useWebSearch
+            useWebSearch: body.useWebSearch,
+            hasAttachments: !!body.attachments
         });
 
         // Get the backend URL
         const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
-        console.log("[API Route] Calling backend at:", `${backendUrl}/api/ai/chat`);
+        console.log("[API Route] Calling backend at:", `${backendUrl}/api/ai/agent`);
 
-        const response = await fetch(`${backendUrl}/api/ai/chat`, {
+        const response = await fetch(`${backendUrl}/api/ai/agent`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -72,7 +73,8 @@ export async function POST(request: NextRequest) {
             body: JSON.stringify({
                 message: body.message,
                 sessionId: body.sessionId,
-                useWebSearch: body.useWebSearch || false
+                useWebSearch: body.useWebSearch || false,
+                attachments: body.attachments || []
             }),
         });
 

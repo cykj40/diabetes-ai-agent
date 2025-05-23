@@ -82,15 +82,25 @@ export default async function authRoutes(fastify: FastifyInstance) {
         try {
             const { email, password } = request.body as { email: string, password: string };
 
+            console.log('[AUTH] Signin attempt:', { email, passwordLength: password?.length });
+
             const result = await authService.authenticateUser(email, password);
 
+            console.log('[AUTH] Signin result:', {
+                success: result.success,
+                message: result.message,
+                hasToken: !!result.token
+            });
+
             if (!result.success) {
+                console.log('[AUTH] Signin failed:', result);
                 return reply.code(400).send(result);
             }
 
             return result;
         } catch (error) {
             fastify.log.error('Signin error:', error);
+            console.error('[AUTH] Signin exception:', error);
             return reply.code(500).send({
                 success: false,
                 message: 'An error occurred during signin'

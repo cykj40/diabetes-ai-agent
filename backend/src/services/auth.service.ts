@@ -61,12 +61,21 @@ export class AuthService {
     // Authenticate a user
     async authenticateUser(email: string, password: string) {
         try {
+            console.log('[AUTH-SERVICE] Attempting to authenticate:', { email, hasPassword: !!password });
+
             // Find user by email
             const user = await prisma.user.findUnique({
                 where: { email }
             });
 
+            console.log('[AUTH-SERVICE] User lookup result:', {
+                userFound: !!user,
+                userId: user?.id,
+                userEmail: user?.email
+            });
+
             if (!user) {
+                console.log('[AUTH-SERVICE] User not found for email:', email);
                 return {
                     success: false,
                     message: 'Invalid email or password',
@@ -75,8 +84,12 @@ export class AuthService {
             }
 
             // Verify password
+            console.log('[AUTH-SERVICE] Comparing passwords...');
             const isPasswordValid = await compare(password, user.password);
+            console.log('[AUTH-SERVICE] Password comparison result:', isPasswordValid);
+
             if (!isPasswordValid) {
+                console.log('[AUTH-SERVICE] Password invalid for user:', email);
                 return {
                     success: false,
                     message: 'Invalid email or password',
@@ -91,6 +104,7 @@ export class AuthService {
                 { expiresIn: '7d' }
             );
 
+            console.log('[AUTH-SERVICE] Authentication successful for:', email);
             return {
                 success: true,
                 message: 'Signed in successfully',
@@ -101,7 +115,7 @@ export class AuthService {
                 }
             };
         } catch (error) {
-            console.error('Error authenticating user:', error);
+            console.error('[AUTH-SERVICE] Error authenticating user:', error);
             return {
                 success: false,
                 message: 'An error occurred during authentication'

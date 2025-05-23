@@ -25,6 +25,7 @@ import axios from 'axios';
 import authRoutes from './routes/auth.routes';
 import pelotonRoutes from './routes/peloton.routes';
 import bloodWorkRoutes from './routes/blood-work.routes';
+import fileRoutes from './routes/file.routes';
 import { authenticate } from './middleware/auth.middleware';
 import { rateLimitPelotonRequests } from './middleware/rate-limit.middleware';
 
@@ -138,6 +139,9 @@ app.register(pelotonRoutes, { prefix: '/api/peloton' });
 
 // Register Blood Work routes
 app.register(bloodWorkRoutes, { prefix: '/api/blood-work' });
+
+// Register file routes
+app.register(fileRoutes, { prefix: '/api/file' });
 
 // Define route schemas
 const StatusResponse = Type.Object({

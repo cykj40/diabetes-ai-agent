@@ -32,6 +32,18 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [chatName, setChatName] = useState<string>('');
 
+    // Function to get token from cookies
+    const getToken = () => {
+        const cookies = document.cookie.split(';');
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'auth_token') {
+                return value;
+            }
+        }
+        return null;
+    };
+
     // Focus input when component mounts
     useEffect(() => {
         inputRef.current?.focus();
@@ -95,10 +107,13 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         const file = event.target.files?.[0];
         if (!file) return;
 
+        console.log('File selected:', file.name, file.type);
+
         // Check file type
         const fileType = file.name.split('.').pop()?.toLowerCase();
-        if (!fileType || !['csv', 'pdf'].includes(fileType)) {
-            alert('Please upload a CSV or PDF file');
+        const allowedTypes = ['csv', 'pdf', 'txt', 'json', 'xml', 'jpg', 'jpeg', 'png'];
+        if (!fileType || !allowedTypes.includes(fileType)) {
+            alert('Please upload a supported file type: CSV, PDF, TXT, JSON, XML, or image files');
             return;
         }
 
@@ -117,7 +132,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         // Add typing indicator
         const typingIndicator: Message = {
             id: 'typing-' + Date.now().toString(),
-            text: 'Processing your blood work file...',
+            text: 'Processing your file...',
             sender: 'ai',
             timestamp: new Date().toLocaleTimeString(),
             isTyping: true
@@ -126,28 +141,57 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         setMessages((prev) => [...prev, typingIndicator]);
 
         try {
-            // Upload the file
+            // Upload the file to the AI upload endpoint
             const formData = new FormData();
             formData.append('file', file);
 
-            const response = await fetch('/api/blood-work/upload', {
+            const uploadResponse = await fetch('/api/ai/upload', {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${getToken()}`,
+                    'X-Session-ID': sessionId
+                },
                 body: formData,
             });
 
-            if (!response.ok) {
-                throw new Error(`Upload failed: ${response.status}`);
+            if (!uploadResponse.ok) {
+                throw new Error(`Upload failed: ${uploadResponse.status}`);
             }
 
-            const result = await response.json();
+            const uploadResult = await uploadResponse.json();
+            console.log('Upload result:', uploadResult);
 
             // Remove typing indicator
             setMessages((prev) => prev.filter(msg => !msg.isTyping));
 
-            // Add AI response with the blood work analysis
+            // Now send a message to the AI to analyze the uploaded file
+            const analysisMessage = `I've uploaded a file called "${file.name}". Can you analyze this ${fileType.toUpperCase()} file and tell me what insights you can provide? If it's medical data like blood work or lab results, please provide a detailed analysis.`;
+
+            // Send to AI agent for analysis
+            const response = await fetch('/api/ai/agent', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${getToken()}`
+                },
+                body: JSON.stringify({
+                    message: analysisMessage,
+                    sessionId,
+                    useWebSearch: false,
+                    attachments: [uploadResult] // Include file info
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`AI analysis failed: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            // Add AI response
             const aiMessage: Message = {
                 id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                text: result.summary || 'Blood work file processed successfully!',
+                text: result.message || 'File processed successfully!',
                 sender: 'ai',
                 timestamp: new Date().toLocaleTimeString(),
             };
@@ -162,7 +206,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
 
             const errorMessage: Message = {
                 id: Date.now().toString(),
-                text: 'Sorry, there was an error processing your blood work file. Please try again.',
+                text: 'Sorry, there was an error processing your file. Please try again.',
                 sender: 'ai',
                 timestamp: new Date().toLocaleTimeString(),
             };
@@ -439,7 +483,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                     type="button"
                                     onClick={() => fileInputRef.current?.click()}
                                     className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 focus:outline-none mr-2"
-                                    title="Upload blood work file (CSV or PDF)"
+                                    title="Upload files (CSV, PDF, TXT, JSON, XML, or images)"
                                     disabled={isUploadingFile}
                                 >
                                     <Paperclip size={18} />
@@ -449,7 +493,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                 <input
                                     ref={fileInputRef}
                                     type="file"
-                                    accept=".csv,.pdf"
+                                    accept=".csv,.pdf,.txt,.json,.xml,.jpg,.jpeg,.png"
                                     onChange={handleFileUpload}
                                     className="hidden"
                                 />
@@ -505,7 +549,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                     <span>Clear chat</span>
                                 </button>
                                 <span className="text-xs text-gray-400">
-                                    📎 Upload CSV/PDF blood work files
+                                    📎 Upload CSV, PDF, TXT, JSON, XML, or image files
                                 </span>
                             </div>
                             <button

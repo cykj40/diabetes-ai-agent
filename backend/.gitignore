@@ -76,7 +76,7 @@ node_modules
 .env.production
 .env.development
 
-
+.prisma
 
 
 

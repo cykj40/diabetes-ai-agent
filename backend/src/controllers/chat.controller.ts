@@ -1,3 +1,7 @@
+// This file is not used - we have moved to Fastify and use AI routes instead
+// Commenting out to fix build errors
+
+/*
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { extractUserIdFromRequest } from '../utils/auth';
@@ -96,4 +100,5 @@ export const getChatSessions = async (req: Request, res: Response) => {
             details: error instanceof Error ? error.message : 'Unknown error',
         });
     }
-}; 
+};
+*/ 

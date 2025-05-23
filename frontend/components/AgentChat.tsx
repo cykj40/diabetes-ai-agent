@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, ArrowLeft, Plus, Save, Trash2, Search } from 'lucide-react';
+import { Send, ArrowLeft, Plus, Save, Trash2, Search, Paperclip } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import ChatMessage from './ChatMessage';
@@ -25,9 +25,11 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [isSaving, setIsSaving] = useState(false);
     const [title, setTitle] = useState('Diabetes AI Assistant');
     const [useWebSearch, setUseWebSearch] = useState(false);
+    const [isUploadingFile, setIsUploadingFile] = useState(false);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const inputRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
     const [chatName, setChatName] = useState<string>('');
 
     // Focus input when component mounts
@@ -86,6 +88,91 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         } catch (error) {
             console.error('Failed to clear chat history:', error);
             setIsLoading(false);
+        }
+    };
+
+    const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Check file type
+        const fileType = file.name.split('.').pop()?.toLowerCase();
+        if (!fileType || !['csv', 'pdf'].includes(fileType)) {
+            alert('Please upload a CSV or PDF file');
+            return;
+        }
+
+        setIsUploadingFile(true);
+
+        // Add user message showing file upload
+        const userMessage: Message = {
+            id: Date.now().toString(),
+            text: `📎 Uploaded: ${file.name}`,
+            sender: 'user',
+            timestamp: new Date().toLocaleTimeString(),
+        };
+
+        setMessages((prev) => [...prev, userMessage]);
+
+        // Add typing indicator
+        const typingIndicator: Message = {
+            id: 'typing-' + Date.now().toString(),
+            text: 'Processing your blood work file...',
+            sender: 'ai',
+            timestamp: new Date().toLocaleTimeString(),
+            isTyping: true
+        };
+
+        setMessages((prev) => [...prev, typingIndicator]);
+
+        try {
+            // Upload the file
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch('/api/blood-work/upload', {
+                method: 'POST',
+                body: formData,
+            });
+
+            if (!response.ok) {
+                throw new Error(`Upload failed: ${response.status}`);
+            }
+
+            const result = await response.json();
+
+            // Remove typing indicator
+            setMessages((prev) => prev.filter(msg => !msg.isTyping));
+
+            // Add AI response with the blood work analysis
+            const aiMessage: Message = {
+                id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                text: result.summary || 'Blood work file processed successfully!',
+                sender: 'ai',
+                timestamp: new Date().toLocaleTimeString(),
+            };
+
+            setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
+
+        } catch (error) {
+            console.error('Error uploading file:', error);
+
+            // Remove typing indicator
+            setMessages((prev) => prev.filter(msg => !msg.isTyping));
+
+            const errorMessage: Message = {
+                id: Date.now().toString(),
+                text: 'Sorry, there was an error processing your blood work file. Please try again.',
+                sender: 'ai',
+                timestamp: new Date().toLocaleTimeString(),
+            };
+            setMessages((prev) => [...prev.filter(msg => !msg.isTyping), errorMessage]);
+        } finally {
+            setIsUploadingFile(false);
+            // Clear the file input
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
         }
     };
 
@@ -347,6 +434,26 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                     <div className="max-w-3xl mx-auto p-4">
                         <form onSubmit={handleSubmit} className="relative">
                             <div className="flex items-center px-4 py-2 rounded-xl border border-gray-300 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
+                                {/* File upload button */}
+                                <button
+                                    type="button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 focus:outline-none mr-2"
+                                    title="Upload blood work file (CSV or PDF)"
+                                    disabled={isUploadingFile}
+                                >
+                                    <Paperclip size={18} />
+                                </button>
+
+                                {/* Hidden file input */}
+                                <input
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept=".csv,.pdf"
+                                    onChange={handleFileUpload}
+                                    className="hidden"
+                                />
+
                                 <textarea
                                     ref={inputRef}
                                     className="flex-1 max-h-32 outline-none resize-none bg-transparent placeholder:text-gray-500"
@@ -373,7 +480,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                         <Search size={18} />
                                     </button>
 
-                                    {isLoading ? (
+                                    {isLoading || isUploadingFile ? (
                                         <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin"></div>
                                     ) : (
                                         <button
@@ -388,14 +495,19 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                             </div>
                         </form>
                         <div className="flex justify-between text-xs text-gray-500 mt-2">
-                            <button
-                                onClick={handleClearChat}
-                                className="flex items-center gap-1 hover:text-gray-700"
-                                disabled={messages.length === 0 || isLoading}
-                            >
-                                <Trash2 size={14} />
-                                <span>Clear chat</span>
-                            </button>
+                            <div className="flex items-center gap-4">
+                                <button
+                                    onClick={handleClearChat}
+                                    className="flex items-center gap-1 hover:text-gray-700"
+                                    disabled={messages.length === 0 || isLoading}
+                                >
+                                    <Trash2 size={14} />
+                                    <span>Clear chat</span>
+                                </button>
+                                <span className="text-xs text-gray-400">
+                                    📎 Upload CSV/PDF blood work files
+                                </span>
+                            </div>
                             <button
                                 onClick={handleSaveChat}
                                 className="flex items-center gap-1 hover:text-gray-700"

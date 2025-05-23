@@ -46,7 +46,7 @@ export function getChartTool(userId: string) {
     return new DynamicStructuredTool({
         name: "create_chart",
         description: "Create a chart visualization of blood sugar data. Returns chart configuration that can be rendered by Chart.js.",
-        schema: chartSchema,
+        schema: chartSchema as any,
         func: async ({ chartType, timeRange, title, showTargetRange, metric }) => {
             try {
                 const now = new Date();

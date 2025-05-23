@@ -78,3 +78,40 @@ model PelotonIntegration {
 
     @@index([userId])
 }
+
+model BloodWorkRecord {
+    id             String           @id @default(uuid())
+    userId         String // Link to user
+    name           String // Name of the lab report
+    date           DateTime // Date of the blood work
+    fileName       String? // Original filename
+    fileType       String? // 'csv' or 'pdf'
+    interpretation String? // AI-generated interpretation
+    createdAt      DateTime         @default(now())
+    updatedAt      DateTime         @updatedAt
+    values         BloodWorkValue[] // Related test values
+
+    @@index([userId])
+    @@index([date])
+    @@index([createdAt])
+}
+
+model BloodWorkValue {
+    id           String          @id @default(uuid())
+    recordId     String // Foreign key to BloodWorkRecord
+    name         String // Name of the test (e.g., "Glucose", "HbA1c")
+    value        String // Value as string (can be numeric or text)
+    numericValue Float? // Parsed numeric value for queries
+    unit         String // Unit of measurement
+    normalRange  String? // Normal range if provided
+    isAbnormal   Boolean? // Whether the value is abnormal
+    category     String? // Category like 'diabetes', 'cholesterol', etc.
+    createdAt    DateTime        @default(now())
+    record       BloodWorkRecord @relation(fields: [recordId], references: [id], onDelete: Cascade)
+
+    @@index([recordId])
+    @@index([name])
+    @@index([isAbnormal])
+    @@index([category])
+    @@index([numericValue])
+}

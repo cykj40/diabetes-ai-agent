@@ -10,6 +10,7 @@ import fastifyCors from '@fastify/cors';
 import fastifySession from '@fastify/session';
 import fastifyCookie from '@fastify/cookie';
 import fastifyOauth2 from '@fastify/oauth2';
+import fastifyMultipart from '@fastify/multipart';
 import { Type } from '@sinclair/typebox';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -23,6 +24,7 @@ import aiRoutes from './routes/ai.routes';
 import axios from 'axios';
 import authRoutes from './routes/auth.routes';
 import pelotonRoutes from './routes/peloton.routes';
+import bloodWorkRoutes from './routes/blood-work.routes';
 import { authenticate } from './middleware/auth.middleware';
 import { rateLimitPelotonRequests } from './middleware/rate-limit.middleware';
 
@@ -107,6 +109,8 @@ app.register(fastifySession, {
     }
 });
 
+app.register(fastifyMultipart);
+
 // Initialize services
 const dexcomService = new DexcomService();
 const aiService = new AIService();
@@ -131,6 +135,9 @@ app.register(authRoutes, { prefix: '/api/auth' });
 
 // Register Peloton routes
 app.register(pelotonRoutes, { prefix: '/api/peloton' });
+
+// Register Blood Work routes
+app.register(bloodWorkRoutes, { prefix: '/api/blood-work' });
 
 // Define route schemas
 const StatusResponse = Type.Object({
@@ -1027,14 +1034,14 @@ app.post('/auth/dexcom/direct', async (request: FastifyRequest<{ Body: { usernam
         process.env.DEXCOM_SHARE_USERNAME = username;
         process.env.DEXCOM_SHARE_PASSWORD = password;
 
-        // Try to get a session ID with these credentials
-        const sessionId = await dexcomService.getShareSessionId();
+        // Try to get a reading to verify credentials work
+        const testReading = await dexcomService.getLatestShareReading();
 
         // Clear the environment variables
         process.env.DEXCOM_SHARE_USERNAME = undefined;
         process.env.DEXCOM_SHARE_PASSWORD = undefined;
 
-        if (!sessionId) {
+        if (!testReading) {
             app.log.error('Failed to authenticate with Dexcom Share API');
             return reply.code(401).send({
                 success: false,

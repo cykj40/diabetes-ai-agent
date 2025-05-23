@@ -5,6 +5,7 @@ import { insulinTools } from './insulin';
 import { chartTools } from './charts';
 import { pelotonTools } from './peloton';
 import { webSearchTools } from './web-search';
+import { bloodWorkTools } from './blood-work';
 
 /**
  * Get all available tools for the agent
@@ -21,6 +22,15 @@ export function getAllTools(userId: string = 'default-user'): DynamicStructuredT
         ...insulinTools(userId),
         ...chartTools(userId),
     ];
+
+    // Add blood work tools
+    try {
+        const bloodWorkToolsArray = bloodWorkTools(userId);
+        console.debug(`Registering ${bloodWorkToolsArray.length} blood work tools`);
+        tools.push(...bloodWorkToolsArray);
+    } catch (error) {
+        console.error("Error registering blood work tools:", error);
+    }
 
     // Try to add Peloton tools if available
     try {

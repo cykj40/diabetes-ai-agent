@@ -1,12 +1,13 @@
 ---
 description: This is a Next.js 15 web application using React 19, TypeScript 5, and Tailwind CSS for UI. The project follows ESLint and Prettier formatting rules and uses the new App Router (not the Pages Router). API routes exist under /api/. AI suggestions should align with our existing stack, avoid unnecessary dependencies, and ensure proper TypeScript typing. Keep imports relative instead of using path aliases.
 globs: 
+alwaysApply: false
 ---
 
 # Your rule content
 
 {
-  "description": "This is a Next.js 15 web application using React 19, TypeScript 5, and Tailwind CSS for UI. The project follows ESLint and Prettier formatting rules and uses the new App Router (not the Pages Router). API routes exist under /api/. AI suggestions should align with our existing stack, avoid unnecessary dependencies, and ensure proper TypeScript typing. Keep imports relative instead of using path aliases.",
+  "description": "This is a Next.js 15 web application using React 19, TypeScript 5,fastify, and Tailwind CSS for UI. The project follows ESLint and Prettier formatting rules and uses the new App Router (not the Pages Router). API routes exist under /api/. AI suggestions should align with our existing stack, avoid unnecessary dependencies, and ensure proper TypeScript typing. Keep imports relative instead of using path aliases.",
   
   "projectTechStack": {
     "frontend": {

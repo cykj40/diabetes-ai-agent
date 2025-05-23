@@ -7,6 +7,9 @@
     "frontend:dev": "cd frontend && npm run dev",
     "backend:dev": "cd backend && npm run dev",
     "dev": "concurrently \"npm run frontend:dev\" \"npm run backend:dev\"",
+    "frontend:build": "cd frontend && npm run build",
+    "backend:build": "cd backend && npm run build",
+    "build": "npm run backend:build && npm run frontend:build",
     "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install",
     "refresh-peloton-token": "ts-node backend/src/tools/peloton/refreshToken.ts"
   },

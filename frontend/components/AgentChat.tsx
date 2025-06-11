@@ -18,6 +18,13 @@ interface AgentChatProps {
     sessionId?: string;
 }
 
+interface RecentSession {
+    id: string;
+    title: string;
+    timestamp: string;
+    messageCount?: number;
+}
+
 export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
@@ -26,6 +33,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [title, setTitle] = useState('Diabetes AI Assistant');
     const [useWebSearch, setUseWebSearch] = useState(false);
     const [isUploadingFile, setIsUploadingFile] = useState(false);
+    const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -52,6 +60,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     // Load chat history and title on component mount
     useEffect(() => {
         fetchChatHistory();
+        fetchRecentSessions();
         if (sessionId !== 'default') {
             fetchSessionTitle();
         }
@@ -86,6 +95,28 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
             }
         } catch (error) {
             console.error('Failed to fetch session title:', error);
+        }
+    };
+
+    const fetchRecentSessions = async () => {
+        try {
+            const token = getToken();
+            if (!token) return;
+
+            const response = await fetch('/api/ai/chat-sessions/recent', {
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            if (response.ok) {
+                const sessions = await response.json();
+                console.log('Recent sessions fetched:', sessions); // Debug log
+                setRecentSessions(sessions);
+            } else {
+                console.error('Failed to fetch recent sessions:', response.status);
+            }
+        } catch (error) {
+            console.error('Failed to fetch recent sessions:', error);
         }
     };
 
@@ -326,10 +357,17 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     };
 
     const handleSaveChat = async () => {
-        if (messages.length === 0) return;
+        console.log('Save chat clicked, messages length:', messages.length);
+        console.log('Messages:', messages);
+
+        if (messages.length === 0) {
+            console.log('No messages to save, returning early');
+            return;
+        }
 
         // Generate a default chat name from the first user message if not provided
         const chatTitle = chatName.trim() || messages.find(m => m.sender === 'user')?.text.substring(0, 30) || `Chat ${new Date().toLocaleString()}`;
+        console.log('Generated chat title:', chatTitle);
         setChatName(chatTitle);
         setIsSaving(true);
 
@@ -361,6 +399,9 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
 
             setTitle(chatTitle);
             alert('Chat saved successfully!');
+
+            // Refresh recent sessions list
+            fetchRecentSessions();
 
             // If we're in a 'default' session, navigate to the new session
             if (sessionId === 'default') {
@@ -413,10 +454,36 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
 
                 <div className="flex-1 overflow-auto p-2">
                     <div className="text-xs text-gray-500 font-medium uppercase px-2 py-2">RECENT CHATS</div>
-                    {/* Current chat title */}
-                    <div className="rounded-md p-2 bg-gray-100 cursor-pointer text-sm">
-                        {title}
-                    </div>
+
+                    {/* Current chat if not in default */}
+                    {sessionId !== 'default' && (
+                        <div className="rounded-md p-2 bg-blue-100 border border-blue-200 cursor-pointer text-sm mb-2">
+                            <div className="font-medium text-blue-800">Current: {title}</div>
+                        </div>
+                    )}
+
+                    {/* Recent sessions */}
+                    {recentSessions.length > 0 ? (
+                        recentSessions.map((session) => (
+                            <div
+                                key={session.id}
+                                className={`rounded-md p-2 cursor-pointer text-sm mb-1 hover:bg-gray-200 ${session.id === sessionId ? 'bg-blue-100 border border-blue-200' : 'bg-gray-100'
+                                    }`}
+                                onClick={() => router.push(`/agent/${session.id}`)}
+                            >
+                                <div className="font-medium truncate">
+                                    {session.title || 'New Conversation'}
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                    {session.messageCount || 0} messages
+                                </div>
+                            </div>
+                        ))
+                    ) : (
+                        <div className="text-xs text-gray-500 px-2 py-2">
+                            No recent chats
+                        </div>
+                    )}
                 </div>
 
                 <div className="border-t border-gray-200 p-3">

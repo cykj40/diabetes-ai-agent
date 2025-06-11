@@ -7,7 +7,6 @@ import { AgentService } from '../services/agent.service';
 import { formatDexcomDate, generateMockReadings, debouncedProcessReadings } from '../server';
 import { PrismaClient } from '@prisma/client';
 import { BaseMessage } from '@langchain/core/messages';
-import { aiService, embeddingService, agentService } from '../services';
 
 // Create a Prisma client instance
 const prisma = new PrismaClient();
@@ -49,7 +48,17 @@ function extractUserId(request: FastifyRequest): string {
     const authHeader = request.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.substring(7);
-        return token !== 'undefined' && token !== 'null' ? token : 'default-user';
+        if (token !== 'undefined' && token !== 'null') {
+            try {
+                // Decode JWT token to get actual user ID
+                const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
+                console.log('Decoded JWT payload:', payload);
+                return payload.userId || 'default-user';
+            } catch (error) {
+                console.error('Error decoding JWT token:', error);
+                return 'default-user';
+            }
+        }
     }
     return 'default-user';
 }
@@ -378,6 +387,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     fastify.get('/chat-sessions/recent', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             const userId = extractUserId(request);
+            console.log('Fetching recent sessions for userId:', userId);
 
             const sessions = await prisma.chatSession.findMany({
                 where: { userId },
@@ -390,6 +400,9 @@ export default async function aiRoutes(fastify: FastifyInstance) {
                 }
             });
 
+            console.log('Found sessions:', sessions.length);
+            console.log('Sessions details:', sessions.map(s => ({ id: s.id, title: s.title, userId: s.userId, messageCount: s._count.messages })));
+
             const formattedSessions = sessions.map(session => ({
                 id: session.id,
                 title: session.title || 'New Conversation',
@@ -397,6 +410,7 @@ export default async function aiRoutes(fastify: FastifyInstance) {
                 messageCount: session._count.messages
             }));
 
+            console.log('Returning formatted sessions:', formattedSessions);
             return formattedSessions;
         } catch (error) {
             console.error('Error fetching recent chat sessions:', error);
@@ -435,26 +449,39 @@ export default async function aiRoutes(fastify: FastifyInstance) {
         }
     });
 
-    // Update a chat session
+    // Update a chat session (or create if it doesn't exist)
     fastify.put<{ Params: { sessionId: string }, Body: { title: string } }>('/chat-sessions/:sessionId', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
             const userId = extractUserId(request);
             const { sessionId } = request.params as { sessionId: string };
             const { title } = request.body as { title: string };
 
-            const session = await prisma.chatSession.updateMany({
-                where: {
-                    id: sessionId,
-                    userId // Ensure user owns this session
+            // Use upsert to create the session if it doesn't exist
+            const session = await prisma.chatSession.upsert({
+                where: { id: sessionId },
+                update: {
+                    title,
+                    updatedAt: new Date()
                 },
-                data: { title }
+                create: {
+                    id: sessionId,
+                    userId,
+                    title,
+                    createdAt: new Date(),
+                    updatedAt: new Date()
+                }
             });
 
-            if (session.count === 0) {
-                return reply.code(404).send({ error: 'Session not found' });
-            }
-
-            return { success: true, message: 'Session updated successfully' };
+            return {
+                success: true,
+                message: 'Session updated successfully',
+                session: {
+                    id: session.id,
+                    title: session.title,
+                    timestamp: session.updatedAt.toISOString(),
+                    messageCount: 0 // We don't have the message count here, but it's not critical
+                }
+            };
         } catch (error) {
             console.error('Error updating chat session:', error);
             return reply.code(500).send({
@@ -495,20 +522,11 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     // Endpoint to get chat history for a session
     fastify.get<{ Params: ChatParams }>('/chat-history/:sessionId', async (request, reply) => {
         try {
-            // Extract user ID from authorization header
-            const authHeader = request.headers.authorization;
-            let userId = 'default-user';
-
-            if (authHeader && authHeader.startsWith('Bearer ')) {
-                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
-            }
-
             const { sessionId = 'default' } = request.params;
-            const fullSessionId = `${userId}-${sessionId}`;
 
-            // Get the chat history from the database
+            // Get the chat history from the database using just sessionId (to match DiabetesAgent format)
             const messages = await prisma.chatMessage.findMany({
-                where: { sessionId: fullSessionId },
+                where: { sessionId },
                 orderBy: { timestamp: 'asc' },
             });
 
@@ -533,20 +551,11 @@ export default async function aiRoutes(fastify: FastifyInstance) {
     // Endpoint to delete chat history for a session
     fastify.delete<{ Params: ChatParams }>('/chat-history/:sessionId', async (request, reply) => {
         try {
-            // Extract user ID from authorization header
-            const authHeader = request.headers.authorization;
-            let userId = 'default-user';
-
-            if (authHeader && authHeader.startsWith('Bearer ')) {
-                userId = authHeader.substring(7); // Remove 'Bearer ' prefix
-            }
-
             const { sessionId = 'default' } = request.params;
-            const fullSessionId = `${userId}-${sessionId}`;
 
-            // Delete all messages for this session
+            // Delete all messages for this session using just sessionId (to match DiabetesAgent format)
             await prisma.chatMessage.deleteMany({
-                where: { sessionId: fullSessionId },
+                where: { sessionId },
             });
 
             return { success: true, message: 'Chat history cleared successfully' };

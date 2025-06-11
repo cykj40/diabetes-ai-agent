@@ -3,10 +3,11 @@ import { cookies } from 'next/headers';
 
 export async function PUT(
     request: NextRequest,
-    context: { params: { sessionId: string } }
+    context: { params: Promise<{ sessionId: string }> }
 ) {
     try {
-        const { sessionId } = context.params;
+        const params = await context.params;
+        const { sessionId } = params;
         const { title } = await request.json();
 
         // Get auth token from request header - using header is more reliable in API routes

@@ -2,13 +2,14 @@ import { NextResponse, NextRequest } from 'next/server';
 import { cookies } from 'next/headers';
 
 type Params = {
-    params: {
+    params: Promise<{
         sessionId: string;
-    };
+    }>;
 };
 
-export async function GET(request: NextRequest, { params }: Params) {
+export async function GET(request: NextRequest, { params: paramsPromise }: Params) {
     try {
+        const params = await paramsPromise;
         const sessionId = params.sessionId;
 
         // Get auth token from request header - using header is more reliable in API routes
@@ -88,8 +89,9 @@ export async function GET(request: NextRequest, { params }: Params) {
     }
 }
 
-export async function DELETE(request: NextRequest, { params }: Params) {
+export async function DELETE(request: NextRequest, { params: paramsPromise }: Params) {
     try {
+        const params = await paramsPromise;
         const sessionId = params.sessionId;
 
         // Get auth token from request header - using header is more reliable in API routes

@@ -172,7 +172,57 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         setMessages((prev) => [...prev, typingIndicator]);
 
         try {
-            // Upload the file to the AI upload endpoint
+            let uploadResult;
+            let analysisMessage;
+
+            // Check if this is a blood work file (CSV or PDF with medical-sounding names)
+            const isBloodWork = (fileType === 'csv' || fileType === 'pdf') &&
+                (file.name.toLowerCase().includes('blood') ||
+                    file.name.toLowerCase().includes('lab') ||
+                    file.name.toLowerCase().includes('test') ||
+                    file.name.toLowerCase().includes('result') ||
+                    file.name.toLowerCase().includes('panel'));
+
+            if (isBloodWork || (fileType === 'csv' || fileType === 'pdf')) {
+                // Try blood work upload first for CSV/PDF files
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const bloodWorkResponse = await fetch('/api/blood-work/upload', {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${getToken()}`
+                        },
+                        body: formData,
+                    });
+
+                    if (bloodWorkResponse.ok) {
+                        const bloodWorkResult = await bloodWorkResponse.json();
+                        console.log('Blood work upload result:', bloodWorkResult);
+
+                        // Remove typing indicator
+                        setMessages((prev) => prev.filter(msg => !msg.isTyping));
+
+                        // Add AI response with blood work insights
+                        const aiMessage: Message = {
+                            id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                            text: `🩸 **Blood Work Analysis Complete!**\n\n${bloodWorkResult.insights || bloodWorkResult.message || 'Blood work processed successfully!'}\n\nI've analyzed your lab results and stored them in your health profile. You can now ask me specific questions about your results, trends, or get recommendations based on this data.`,
+                            sender: 'ai',
+                            timestamp: new Date().toLocaleTimeString(),
+                        };
+
+                        setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
+                        return; // Exit early for successful blood work upload
+                    } else {
+                        console.log('Blood work upload failed, falling back to general upload');
+                    }
+                } catch (bloodWorkError) {
+                    console.log('Blood work upload error, falling back to general upload:', bloodWorkError);
+                }
+            }
+
+            // Fallback to general file upload
             const formData = new FormData();
             formData.append('file', file);
 
@@ -189,14 +239,18 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                 throw new Error(`Upload failed: ${uploadResponse.status}`);
             }
 
-            const uploadResult = await uploadResponse.json();
-            console.log('Upload result:', uploadResult);
+            uploadResult = await uploadResponse.json();
+            console.log('General upload result:', uploadResult);
 
             // Remove typing indicator
             setMessages((prev) => prev.filter(msg => !msg.isTyping));
 
-            // Now send a message to the AI to analyze the uploaded file
-            const analysisMessage = `I've uploaded a file called "${file.name}". Can you analyze this ${fileType.toUpperCase()} file and tell me what insights you can provide? If it's medical data like blood work or lab results, please provide a detailed analysis.`;
+            // Create analysis message based on file type
+            if (fileType === 'csv' || fileType === 'pdf') {
+                analysisMessage = `I've uploaded a ${fileType.toUpperCase()} file called "${file.name}". This appears to be medical or lab data. Can you analyze this file and provide insights? If it contains blood work or lab results, please provide a detailed health analysis including any abnormal values, trends, and recommendations.`;
+            } else {
+                analysisMessage = `I've uploaded a file called "${file.name}". Can you analyze this ${fileType.toUpperCase()} file and tell me what insights you can provide?`;
+            }
 
             // Send to AI agent for analysis
             const response = await fetch('/api/ai/agent', {
@@ -512,10 +566,10 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                                 <p className="font-medium">Show me my blood sugar trends</p>
                                             </div>
                                             <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
-                                                <p className="font-medium">What was my average glucose this week?</p>
+                                                <p className="font-medium">Give me food suggestions based on my blood work</p>
                                             </div>
                                             <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
-                                                <p className="font-medium">When was my last low blood sugar?</p>
+                                                <p className="font-medium">How should I adjust my insulin based on my lab results?</p>
                                             </div>
                                             <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
                                                 <p className="font-medium">Create a chart of my glucose patterns</p>
@@ -550,7 +604,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                     type="button"
                                     onClick={() => fileInputRef.current?.click()}
                                     className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 focus:outline-none mr-2"
-                                    title="Upload files (CSV, PDF, TXT, JSON, XML, or images)"
+                                    title="Upload blood work files (CSV/PDF) or other documents"
                                     disabled={isUploadingFile}
                                 >
                                     <Paperclip size={18} />
@@ -616,7 +670,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                     <span>Clear chat</span>
                                 </button>
                                 <span className="text-xs text-gray-400">
-                                    📎 Upload CSV, PDF, TXT, JSON, XML, or image files
+                                    📎 Upload files (Blood work: CSV/PDF • General: TXT, JSON, XML, images)
                                 </span>
                             </div>
                             <button

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { BloodWorkEmbeddingService } from './blood-work-embedding.service';
 
 export interface BloodWorkValue {
     name: string;
@@ -21,9 +22,11 @@ export interface BloodWorkRecord {
 
 export class BloodWorkService {
     private prisma: PrismaClient;
+    private embeddingService: BloodWorkEmbeddingService;
 
     constructor() {
         this.prisma = new PrismaClient();
+        this.embeddingService = new BloodWorkEmbeddingService();
     }
 
     /**
@@ -100,7 +103,19 @@ export class BloodWorkService {
             }
         });
 
-        return this.formatRecord(record);
+        const formattedRecord = this.formatRecord(record);
+
+        // Also store in Pinecone for semantic search
+        try {
+            await this.embeddingService.initialize();
+            await this.embeddingService.processAndStoreRecord(formattedRecord, userId);
+            console.log('Blood work record successfully stored in Pinecone for semantic search');
+        } catch (error) {
+            console.error('Error storing blood work in Pinecone:', error);
+            // Don't fail the upload if Pinecone fails, just log the error
+        }
+
+        return formattedRecord;
     }
 
     /**
@@ -152,7 +167,19 @@ export class BloodWorkService {
             }
         });
 
-        return this.formatRecord(record);
+        const formattedRecord = this.formatRecord(record);
+
+        // Also store in Pinecone for semantic search
+        try {
+            await this.embeddingService.initialize();
+            await this.embeddingService.processAndStoreRecord(formattedRecord, userId);
+            console.log('Blood work record successfully stored in Pinecone for semantic search');
+        } catch (error) {
+            console.error('Error storing blood work in Pinecone:', error);
+            // Don't fail the upload if Pinecone fails, just log the error
+        }
+
+        return formattedRecord;
     }
 
     /**

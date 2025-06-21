@@ -1,18 +1,16 @@
 import { AIService } from './ai.service';
 import { PineconeService } from './pinecone';
-import { BloodWorkService, BloodWorkRecord } from './blood-work.service';
+import { BloodWorkRecord } from './blood-work.service';
 import { PrismaClient } from '@prisma/client';
 
 export class BloodWorkEmbeddingService {
     private aiService: AIService;
-    private bloodWorkService: BloodWorkService;
     private prisma: PrismaClient;
     private readonly indexName = 'blood-work-data';
     private readonly embeddingDimension = 1536; // OpenAI embedding dimension
 
     constructor() {
         this.aiService = new AIService();
-        this.bloodWorkService = new BloodWorkService();
         this.prisma = new PrismaClient();
     }
 
@@ -306,7 +304,26 @@ export class BloodWorkEmbeddingService {
         try {
             console.log(`Re-processing all blood work for user ${userId}`);
 
-            const records = await this.bloodWorkService.getAllRecords(userId);
+            // Query blood work records directly from database
+            const dbRecords = await this.prisma.bloodWorkRecord.findMany({
+                where: { userId },
+                include: { values: true }
+            });
+
+            // Convert to BloodWorkRecord format
+            const records: BloodWorkRecord[] = dbRecords.map(record => ({
+                id: record.id,
+                name: record.name,
+                date: record.date.toISOString(),
+                values: record.values.map(value => ({
+                    name: value.name,
+                    value: value.value,
+                    unit: value.unit,
+                    isAbnormal: value.isAbnormal || false,
+                    normalRange: value.normalRange || undefined,
+                    category: value.category || undefined
+                }))
+            }));
 
             for (const record of records) {
                 await this.processAndStoreRecord(record, userId);

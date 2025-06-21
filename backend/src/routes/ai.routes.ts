@@ -548,6 +548,39 @@ export default async function aiRoutes(fastify: FastifyInstance) {
         }
     });
 
+    // Endpoint to save a message to chat history
+    fastify.post<{
+        Params: ChatParams,
+        Body: { message: string, type: 'human' | 'ai', timestamp: string }
+    }>('/chat-history/:sessionId', async (request, reply) => {
+        try {
+            const { sessionId = 'default' } = request.params;
+            const { message, type, timestamp } = request.body as { message: string, type: 'human' | 'ai', timestamp: string };
+
+            // Save the message to the database
+            const savedMessage = await prisma.chatMessage.create({
+                data: {
+                    sessionId,
+                    content: message,
+                    type,
+                    timestamp: new Date(timestamp)
+                }
+            });
+
+            return {
+                success: true,
+                message: 'Message saved successfully',
+                messageId: savedMessage.id
+            };
+        } catch (error) {
+            console.error('Error saving message to chat history:', error);
+            return reply.code(500).send({
+                error: 'Failed to save message',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
     // Endpoint to delete chat history for a session
     fastify.delete<{ Params: ChatParams }>('/chat-history/:sessionId', async (request, reply) => {
         try {

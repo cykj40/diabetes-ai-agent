@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, ArrowLeft, Plus, Save, Trash2, Search, Paperclip } from 'lucide-react';
+import { Send, ArrowLeft, Plus, Save, Trash2, Search, Paperclip, Edit3, MoreVertical, Check, X } from 'lucide-react';
 import { AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import ChatMessage from './ChatMessage';
@@ -34,6 +34,10 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const [useWebSearch, setUseWebSearch] = useState(false);
     const [isUploadingFile, setIsUploadingFile] = useState(false);
     const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
+    const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+    const [editingTitle, setEditingTitle] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
     const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -70,6 +74,13 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
+
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = () => setActiveDropdown(null);
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, []);
 
     const fetchChatHistory = async () => {
         try {
@@ -132,6 +143,108 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
             console.error('Failed to clear chat history:', error);
             setIsLoading(false);
         }
+    };
+
+    // New Chat - Save current chat if it has messages, then navigate to new chat
+    const handleNewChat = async () => {
+        // If current chat has messages and is not saved, save it first
+        if (messages.length > 0 && sessionId === 'default') {
+            await handleSaveChat();
+        }
+
+        // Navigate to new chat
+        router.push('/agent');
+
+        // Clear current messages
+        setMessages([]);
+        setTitle('Diabetes AI Assistant');
+
+        // Refresh recent sessions to show the newly saved chat
+        fetchRecentSessions();
+    };
+
+    // Delete session
+    const handleDeleteSession = async (sessionIdToDelete: string, event: React.MouseEvent) => {
+        event.stopPropagation();
+
+        if (!confirm('Are you sure you want to delete this conversation? This action cannot be undone.')) {
+            return;
+        }
+
+        try {
+            const token = getToken();
+            if (!token) return;
+
+            const response = await fetch(`/api/ai/chat-sessions/${sessionIdToDelete}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+
+            if (response.ok) {
+                // If we're deleting the current session, redirect to new chat
+                if (sessionIdToDelete === sessionId) {
+                    router.push('/agent');
+                }
+                // Refresh the sessions list
+                fetchRecentSessions();
+            } else {
+                alert('Failed to delete conversation');
+            }
+        } catch (error) {
+            console.error('Error deleting session:', error);
+            alert('Failed to delete conversation');
+        }
+    };
+
+    // Start editing session title
+    const handleStartEdit = (session: RecentSession, event: React.MouseEvent) => {
+        event.stopPropagation();
+        setEditingSessionId(session.id);
+        setEditingTitle(session.title);
+        setActiveDropdown(null);
+    };
+
+    // Save edited title
+    const handleSaveEdit = async (sessionIdToEdit: string) => {
+        try {
+            const token = getToken();
+            if (!token) return;
+
+            const response = await fetch(`/api/ai/chat-sessions/${sessionIdToEdit}`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                    title: editingTitle
+                })
+            });
+
+            if (response.ok) {
+                setEditingSessionId(null);
+                setEditingTitle('');
+                fetchRecentSessions();
+
+                // Update current title if editing current session
+                if (sessionIdToEdit === sessionId) {
+                    setTitle(editingTitle.substring(0, 30) + (editingTitle.length > 30 ? '...' : ''));
+                }
+            } else {
+                alert('Failed to update conversation title');
+            }
+        } catch (error) {
+            console.error('Error updating session:', error);
+            alert('Failed to update conversation title');
+        }
+    };
+
+    // Cancel editing
+    const handleCancelEdit = () => {
+        setEditingSessionId(null);
+        setEditingTitle('');
     };
 
     const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -198,107 +311,90 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                     });
 
                     if (bloodWorkResponse.ok) {
-                        const bloodWorkResult = await bloodWorkResponse.json();
-                        console.log('Blood work upload result:', bloodWorkResult);
+                        uploadResult = await bloodWorkResponse.json();
+                        console.log('Blood work upload successful:', uploadResult);
 
-                        // Remove typing indicator
-                        setMessages((prev) => prev.filter(msg => !msg.isTyping));
-
-                        // Add AI response with blood work insights
-                        const aiMessage: Message = {
-                            id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                            text: `🩸 **Blood Work Analysis Complete!**\n\n${bloodWorkResult.insights || bloodWorkResult.message || 'Blood work processed successfully!'}\n\nI've analyzed your lab results and stored them in your health profile. You can now ask me specific questions about your results, trends, or get recommendations based on this data.`,
-                            sender: 'ai',
-                            timestamp: new Date().toLocaleTimeString(),
-                        };
-
-                        setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
-                        return; // Exit early for successful blood work upload
+                        analysisMessage = uploadResult.insights ||
+                            `✅ **Blood Work Analysis Complete**\n\n${uploadResult.message}\n\n` +
+                            `📊 **Summary:**\n` +
+                            `• Tests processed: ${uploadResult.testsCount || 0}\n` +
+                            `• Abnormal results: ${uploadResult.abnormalCount || 0}\n\n` +
+                            `🔍 You can now ask me questions about your lab results, like:\n` +
+                            `• "What's my cholesterol level?"\n` +
+                            `• "Show me my abnormal results"\n` +
+                            `• "What foods should I eat based on my lab results?"`;
                     } else {
-                        console.log('Blood work upload failed, falling back to general upload');
+                        // If blood work upload fails, fall back to general file upload
+                        throw new Error('Blood work processing failed');
                     }
                 } catch (bloodWorkError) {
-                    console.log('Blood work upload error, falling back to general upload:', bloodWorkError);
+                    console.log('Blood work upload failed, trying general upload:', bloodWorkError);
+                    // Fall back to general file upload
+                    const formData = new FormData();
+                    formData.append('file', file);
+
+                    const generalResponse = await fetch('/api/ai/upload', {
+                        method: 'POST',
+                        body: formData,
+                    });
+
+                    if (generalResponse.ok) {
+                        uploadResult = await generalResponse.json();
+                        analysisMessage = uploadResult.message || 'File uploaded successfully. You can now ask questions about the content.';
+                    } else {
+                        throw new Error('File upload failed');
+                    }
+                }
+            } else {
+                // For other file types, use general upload
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch('/api/ai/upload', {
+                    method: 'POST',
+                    body: formData,
+                });
+
+                if (response.ok) {
+                    uploadResult = await response.json();
+                    analysisMessage = uploadResult.message || 'File uploaded successfully. You can now ask questions about the content.';
+                } else {
+                    throw new Error('File upload failed');
                 }
             }
 
-            // Fallback to general file upload
-            const formData = new FormData();
-            formData.append('file', file);
-
-            const uploadResponse = await fetch('/api/ai/upload', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${getToken()}`,
-                    'X-Session-ID': sessionId
-                },
-                body: formData,
+            // Remove typing indicator and add AI response
+            setMessages((prev) => {
+                const filteredMessages = prev.filter(msg => !msg.isTyping);
+                return [
+                    ...filteredMessages,
+                    {
+                        id: Date.now().toString(),
+                        text: analysisMessage,
+                        sender: 'ai',
+                        timestamp: new Date().toLocaleTimeString(),
+                    }
+                ];
             });
-
-            if (!uploadResponse.ok) {
-                throw new Error(`Upload failed: ${uploadResponse.status}`);
-            }
-
-            uploadResult = await uploadResponse.json();
-            console.log('General upload result:', uploadResult);
-
-            // Remove typing indicator
-            setMessages((prev) => prev.filter(msg => !msg.isTyping));
-
-            // Create analysis message based on file type
-            if (fileType === 'csv' || fileType === 'pdf') {
-                analysisMessage = `I've uploaded a ${fileType.toUpperCase()} file called "${file.name}". This appears to be medical or lab data. Can you analyze this file and provide insights? If it contains blood work or lab results, please provide a detailed health analysis including any abnormal values, trends, and recommendations.`;
-            } else {
-                analysisMessage = `I've uploaded a file called "${file.name}". Can you analyze this ${fileType.toUpperCase()} file and tell me what insights you can provide?`;
-            }
-
-            // Send to AI agent for analysis
-            const response = await fetch('/api/ai/agent', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${getToken()}`
-                },
-                body: JSON.stringify({
-                    message: analysisMessage,
-                    sessionId,
-                    useWebSearch: false,
-                    attachments: [uploadResult] // Include file info
-                })
-            });
-
-            if (!response.ok) {
-                throw new Error(`AI analysis failed: ${response.status}`);
-            }
-
-            const result = await response.json();
-
-            // Add AI response
-            const aiMessage: Message = {
-                id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                text: result.message || 'File processed successfully!',
-                sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-            };
-
-            setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
 
         } catch (error) {
-            console.error('Error uploading file:', error);
+            console.error('File upload error:', error);
 
-            // Remove typing indicator
-            setMessages((prev) => prev.filter(msg => !msg.isTyping));
-
-            const errorMessage: Message = {
-                id: Date.now().toString(),
-                text: 'Sorry, there was an error processing your file. Please try again.',
-                sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-            };
-            setMessages((prev) => [...prev.filter(msg => !msg.isTyping), errorMessage]);
+            // Remove typing indicator and show error
+            setMessages((prev) => {
+                const filteredMessages = prev.filter(msg => !msg.isTyping);
+                return [
+                    ...filteredMessages,
+                    {
+                        id: Date.now().toString(),
+                        text: `❌ Sorry, there was an error processing your file: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                        sender: 'ai',
+                        timestamp: new Date().toLocaleTimeString(),
+                    }
+                ];
+            });
         } finally {
             setIsUploadingFile(false);
-            // Clear the file input
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
@@ -323,7 +419,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         // Add typing indicator
         const typingIndicator: Message = {
             id: 'typing-' + Date.now().toString(),
-            text: '...',
+            text: 'Thinking...',
             sender: 'ai',
             timestamp: new Date().toLocaleTimeString(),
             isTyping: true
@@ -332,148 +428,145 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         setMessages((prev) => [...prev, typingIndicator]);
 
         try {
-            // Get token from cookie if available
-            const cookies = document.cookie.split(';');
-            const authCookie = cookies.find(c => c.trim().startsWith('auth_token='));
-            const token = authCookie ? authCookie.split('=')[1].trim() : null;
-            console.log("[Chat] Auth token exists:", !!token);
-
-            console.log("[Chat] Sending request to /api/ai/agent");
             const response = await fetch('/api/ai/agent', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...(token && { Authorization: `Bearer ${token}` }),
                 },
                 body: JSON.stringify({
                     message: input,
                     sessionId,
-                    useWebSearch, // Pass the web search flag
+                    useWebSearch,
                 }),
             });
 
-            console.log("[Chat] Response status:", response.status);
-
             if (!response.ok) {
-                throw new Error(`Error: ${response.status}`);
+                throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const data = await response.json();
-            console.log("[Chat] API Response:", data);
-            console.log("[Chat] Response structure:",
-                "keys:", Object.keys(data),
-                "message?", typeof data.message,
-                "chatHistory?", Array.isArray(data.chatHistory) ? data.chatHistory.length : "not array"
-            );
 
-            // Remove typing indicator
-            setMessages((prev) => prev.filter(msg => !msg.isTyping));
+            // Remove typing indicator and add AI response
+            setMessages((prev) => {
+                const filteredMessages = prev.filter(msg => !msg.isTyping);
+                return [
+                    ...filteredMessages,
+                    {
+                        id: Date.now().toString(),
+                        text: data.message,
+                        sender: 'ai',
+                        timestamp: new Date().toLocaleTimeString(),
+                    }
+                ];
+            });
 
-            // Update messages from chat history if provided
-            if (data.chatHistory && Array.isArray(data.chatHistory)) {
-                console.log("[Chat] Using chatHistory from response");
-                setMessages(data.chatHistory);
-            } else if (data.message) {
-                console.log("[Chat] Using message from response");
-                // Fallback to adding just the response message
-                const aiMessage: Message = {
-                    id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
-                    text: data.message,
-                    sender: 'ai',
-                    timestamp: new Date().toLocaleTimeString(),
-                };
-                setMessages((prev) => [...prev.filter(msg => !msg.isTyping), aiMessage]);
-            } else {
-                console.log("[Chat] No usable data in response");
-                throw new Error("Invalid response format from server");
-            }
-
-            // Reset web search flag after use
-            setUseWebSearch(false);
         } catch (error) {
-            console.error('[Chat] Error sending message:', error);
-            // Remove typing indicator
-            setMessages((prev) => prev.filter(msg => !msg.isTyping));
+            console.error('Error:', error);
 
-            const errorMessage: Message = {
-                id: Date.now().toString(),
-                text: 'Sorry, there was an error processing your request. Please try again.',
-                sender: 'ai',
-                timestamp: new Date().toLocaleTimeString(),
-            };
-            setMessages((prev) => [...prev.filter(msg => !msg.isTyping), errorMessage]);
-
-            // Reset web search flag after use
-            setUseWebSearch(false);
+            // Remove typing indicator and show error
+            setMessages((prev) => {
+                const filteredMessages = prev.filter(msg => !msg.isTyping);
+                return [
+                    ...filteredMessages,
+                    {
+                        id: Date.now().toString(),
+                        text: 'Sorry, there was an error processing your request. Please try again.',
+                        sender: 'ai',
+                        timestamp: new Date().toLocaleTimeString(),
+                    }
+                ];
+            });
         } finally {
             setIsLoading(false);
         }
     };
 
     const handleSaveChat = async () => {
-        console.log('Save chat clicked, messages length:', messages.length);
-        console.log('Messages:', messages);
-
         if (messages.length === 0) {
-            console.log('No messages to save, returning early');
+            alert('No messages to save');
             return;
         }
 
-        // Generate a default chat name from the first user message if not provided
-        const chatTitle = chatName.trim() || messages.find(m => m.sender === 'user')?.text.substring(0, 30) || `Chat ${new Date().toLocaleString()}`;
-        console.log('Generated chat title:', chatTitle);
-        setChatName(chatTitle);
         setIsSaving(true);
 
         try {
-            // Get token from cookie if available
-            const cookies = document.cookie.split(';');
-            const authCookie = cookies.find(c => c.trim().startsWith('auth_token='));
-            const token = authCookie ? authCookie.split('=')[1].trim() : null;
-
+            const token = getToken();
             if (!token) {
-                throw new Error('Authentication required to save chats');
+                alert('Please sign in to save chats');
+                return;
             }
 
-            // Create a new session with the first message as the title
-            const response = await fetch(`/api/ai/chat-sessions/${sessionId}`, {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    title: chatTitle
-                })
-            });
+            // Generate a title from the first user message or use a default
+            const firstUserMessage = messages.find(msg => msg.sender === 'user');
+            const autoTitle = firstUserMessage
+                ? firstUserMessage.text.substring(0, 50) + (firstUserMessage.text.length > 50 ? '...' : '')
+                : 'New Conversation';
 
-            if (!response.ok) {
-                throw new Error(`Failed to save chat: ${response.status}`);
-            }
-
-            setTitle(chatTitle);
-            alert('Chat saved successfully!');
-
-            // Refresh recent sessions list
-            fetchRecentSessions();
-
-            // If we're in a 'default' session, navigate to the new session
             if (sessionId === 'default') {
-                // Get the latest sessions
-                const sessionsResponse = await fetch('/api/ai/chat-sessions', {
+                // Create a new session
+                const createResponse = await fetch('/api/ai/chat-sessions', {
+                    method: 'POST',
                     headers: {
+                        'Content-Type': 'application/json',
                         'Authorization': `Bearer ${token}`
-                    }
+                    },
+                    body: JSON.stringify({
+                        title: chatName || autoTitle
+                    })
                 });
 
-                if (sessionsResponse.ok) {
-                    const sessions = await sessionsResponse.json();
-                    if (sessions.length > 0) {
-                        // Navigate to the first (most recent) session
-                        router.push(`/agent/${sessions[0].id}`);
+                if (!createResponse.ok) {
+                    const errorData = await createResponse.json();
+                    throw new Error(errorData.error || 'Failed to create chat session');
+                }
+
+                const newSession = await createResponse.json();
+
+                // Save messages to the new session
+                for (const message of messages.filter(msg => !msg.isTyping)) {
+                    await fetch(`/api/ai/chat-history/${newSession.id}`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                            message: message.text,
+                            type: message.sender === 'user' ? 'human' : 'ai',
+                            timestamp: message.timestamp
+                        })
+                    });
+                }
+
+                alert('Chat saved successfully!');
+
+                // Navigate to the new session
+                router.push(`/agent/${newSession.id}`);
+            } else {
+                // Update existing session title if provided
+                if (chatName && chatName !== title) {
+                    const updateResponse = await fetch(`/api/ai/chat-sessions/${sessionId}`, {
+                        method: 'PUT',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({
+                            title: chatName
+                        })
+                    });
+
+                    if (updateResponse.ok) {
+                        setTitle(chatName);
+                        alert('Chat title updated successfully!');
                     }
+                } else {
+                    alert('Chat is already saved!');
                 }
             }
+
+            // Refresh recent sessions
+            fetchRecentSessions();
         } catch (error) {
             console.error('Error saving chat:', error);
             alert(`Failed to save chat: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -492,197 +585,341 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         setUseWebSearch(prev => !prev);
     };
 
+    // Filter sessions based on search query
+    const filteredSessions = recentSessions.filter(session =>
+        session.title.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
     return (
         <div className="flex h-screen bg-white">
-            {/* Sidebar */}
-            <div className="w-64 bg-[#f7f7f8] text-gray-800 flex-col h-full shadow-md">
-                <div className="p-3">
+            {/* Enhanced Sidebar with CRUD Operations */}
+            <div className="w-80 bg-[#f7f7f8] text-gray-800 flex-col h-full shadow-md border-r">
+                {/* New Chat Button */}
+                <div className="p-4 border-b">
                     <button
-                        className="w-full flex items-center gap-3 rounded-md border border-gray-300 p-3 text-sm transition-colors hover:bg-gray-100"
-                        onClick={() => router.push('/agent')}
+                        className="w-full flex items-center gap-3 rounded-lg border border-gray-300 p-3 text-sm font-medium transition-colors hover:bg-gray-100 hover:border-gray-400"
+                        onClick={handleNewChat}
                     >
-                        <Plus size={16} />
-                        <span>New chat</span>
+                        <Plus size={18} />
+                        <span>New Chat</span>
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-auto p-2">
-                    <div className="text-xs text-gray-500 font-medium uppercase px-2 py-2">RECENT CHATS</div>
+                {/* Search Bar */}
+                <div className="p-4 border-b">
+                    <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                        <input
+                            type="text"
+                            placeholder="Search conversations..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        />
+                    </div>
+                </div>
 
-                    {/* Current chat if not in default */}
-                    {sessionId !== 'default' && (
-                        <div className="rounded-md p-2 bg-blue-100 border border-blue-200 cursor-pointer text-sm mb-2">
-                            <div className="font-medium text-blue-800">Current: {title}</div>
-                        </div>
-                    )}
+                {/* Conversations List */}
+                <div className="flex-1 overflow-auto">
+                    <div className="p-4">
+                        <div className="text-xs text-gray-500 font-medium uppercase mb-3">CONVERSATIONS</div>
 
-                    {/* Recent sessions */}
-                    {recentSessions.length > 0 ? (
-                        recentSessions.map((session) => (
-                            <div
-                                key={session.id}
-                                className={`rounded-md p-2 cursor-pointer text-sm mb-1 hover:bg-gray-200 ${session.id === sessionId ? 'bg-blue-100 border border-blue-200' : 'bg-gray-100'
-                                    }`}
-                                onClick={() => router.push(`/agent/${session.id}`)}
-                            >
-                                <div className="font-medium truncate">
-                                    {session.title || 'New Conversation'}
-                                </div>
-                                <div className="text-xs text-gray-500">
-                                    {session.messageCount || 0} messages
+                        {/* Current chat indicator */}
+                        {sessionId !== 'default' && (
+                            <div className="rounded-lg p-3 bg-blue-50 border border-blue-200 mb-3">
+                                <div className="flex items-center gap-2">
+                                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                                    <div className="font-medium text-blue-800 text-sm truncate">
+                                        Current: {title}
+                                    </div>
                                 </div>
                             </div>
-                        ))
-                    ) : (
-                        <div className="text-xs text-gray-500 px-2 py-2">
-                            No recent chats
-                        </div>
-                    )}
+                        )}
+
+                        {/* Sessions list */}
+                        {filteredSessions.length > 0 ? (
+                            <div className="space-y-1">
+                                {filteredSessions.map((session) => (
+                                    <div
+                                        key={session.id}
+                                        className={`group relative rounded-lg p-3 cursor-pointer transition-colors ${session.id === sessionId
+                                            ? 'bg-blue-100 border border-blue-200'
+                                            : 'hover:bg-gray-100'
+                                            }`}
+                                        onClick={() => router.push(`/agent/${session.id}`)}
+                                    >
+                                        {editingSessionId === session.id ? (
+                                            // Edit mode
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="text"
+                                                    value={editingTitle}
+                                                    onChange={(e) => setEditingTitle(e.target.value)}
+                                                    className="flex-1 px-2 py-1 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') {
+                                                            handleSaveEdit(session.id);
+                                                        } else if (e.key === 'Escape') {
+                                                            handleCancelEdit();
+                                                        }
+                                                    }}
+                                                    autoFocus
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleSaveEdit(session.id);
+                                                    }}
+                                                    className="text-green-600 hover:text-green-800 p-1"
+                                                >
+                                                    <Check size={14} />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleCancelEdit();
+                                                    }}
+                                                    className="text-gray-600 hover:text-gray-800 p-1"
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            // Normal mode
+                                            <>
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="font-medium text-sm truncate text-gray-900">
+                                                            {session.title || 'New Conversation'}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500 mt-1">
+                                                            {session.messageCount || 0} messages
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Actions dropdown */}
+                                                    <div className="relative opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setActiveDropdown(activeDropdown === session.id ? null : session.id);
+                                                            }}
+                                                            className="p-1 hover:bg-gray-200 rounded"
+                                                        >
+                                                            <MoreVertical size={14} />
+                                                        </button>
+
+                                                        {activeDropdown === session.id && (
+                                                            <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-10 min-w-[120px]">
+                                                                <button
+                                                                    onClick={(e) => handleStartEdit(session, e)}
+                                                                    className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 flex items-center gap-2"
+                                                                >
+                                                                    <Edit3 size={12} />
+                                                                    Rename
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => handleDeleteSession(session.id, e)}
+                                                                    className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 text-red-600 flex items-center gap-2"
+                                                                >
+                                                                    <Trash2 size={12} />
+                                                                    Delete
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-sm text-gray-500 text-center py-8">
+                                {searchQuery ? 'No conversations found' : 'No conversations yet'}
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                <div className="border-t border-gray-200 p-3">
-                    <button
-                        className="w-full flex items-center gap-2 rounded-md p-2 text-sm hover:bg-gray-100"
-                        onClick={() => router.push('/dashboard')}
-                    >
-                        <ArrowLeft size={16} />
-                        <span>Back to Dashboard</span>
-                    </button>
+                {/* Bottom actions */}
+                <div className="border-t border-gray-200 p-4">
+                    <div className="space-y-2">
+                        <button
+                            className="w-full flex items-center gap-2 rounded-md p-2 text-sm hover:bg-gray-100"
+                            onClick={() => router.push('/conversations')}
+                        >
+                            <Search size={16} />
+                            <span>View All Conversations</span>
+                        </button>
+                        <button
+                            className="w-full flex items-center gap-2 rounded-md p-2 text-sm hover:bg-gray-100"
+                            onClick={() => router.push('/dashboard')}
+                        >
+                            <ArrowLeft size={16} />
+                            <span>Back to Dashboard</span>
+                        </button>
+                    </div>
                 </div>
             </div>
 
             {/* Main chat area */}
-            <div className="flex-1 flex flex-col h-full max-h-screen overflow-hidden relative">
-                <div className="flex-1 overflow-y-auto">
-                    <div className="w-full">
-                        <AnimatePresence>
-                            {messages.length === 0 ? (
-                                <div className="flex items-center justify-center h-full text-gray-600 p-8">
-                                    <div className="text-center mt-8">
-                                        <h1 className="text-3xl font-semibold mb-6">Diabetes AI Assistant</h1>
-                                        <p className="mb-6">Ask about your blood sugar, request charts, or get insights about your health data.</p>
-                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-w-xl mx-auto">
-                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
-                                                <p className="font-medium">Show me my blood sugar trends</p>
-                                            </div>
-                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
-                                                <p className="font-medium">Give me food suggestions based on my blood work</p>
-                                            </div>
-                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
-                                                <p className="font-medium">How should I adjust my insulin based on my lab results?</p>
-                                            </div>
-                                            <div className="border border-gray-200 rounded-lg p-3 text-left hover:bg-gray-50 cursor-pointer">
-                                                <p className="font-medium">Create a chart of my glucose patterns</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : (
-                                messages.map((message) => (
-                                    <ChatMessage
-                                        key={message.id}
-                                        id={message.id}
-                                        text={message.text}
-                                        sender={message.sender}
-                                        timestamp={message.timestamp}
-                                        isTyping={message.isTyping}
-                                    />
-                                ))
-                            )}
-                        </AnimatePresence>
-                        <div ref={messagesEndRef} />
+            <div className="flex-1 flex flex-col h-full">
+                {/* Chat header */}
+                <div className="bg-white border-b border-gray-200 p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <h1 className="text-xl font-semibold text-gray-900">{title}</h1>
+                        {sessionId !== 'default' && (
+                            <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded-full">
+                                Session: {sessionId.substring(0, 8)}...
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={toggleWebSearch}
+                            className={`px-3 py-1 text-xs rounded-full transition-colors ${useWebSearch
+                                ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                                : 'bg-gray-100 text-gray-600 border border-gray-200'
+                                }`}
+                        >
+                            Web Search {useWebSearch ? 'ON' : 'OFF'}
+                        </button>
+                        <button
+                            onClick={handleSaveChat}
+                            disabled={isSaving || messages.length === 0}
+                            className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="Save Chat"
+                        >
+                            <Save size={18} />
+                        </button>
+                        <button
+                            onClick={handleClearChat}
+                            className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-md"
+                            title="Clear Chat"
+                        >
+                            <Trash2 size={18} />
+                        </button>
                     </div>
                 </div>
 
-                {/* Input form */}
-                <div className="border-t border-gray-300 bg-white">
-                    <div className="max-w-3xl mx-auto p-4">
-                        <form onSubmit={handleSubmit} className="relative">
-                            <div className="flex items-center px-4 py-2 rounded-xl border border-gray-300 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500">
-                                {/* File upload button */}
-                                <button
-                                    type="button"
-                                    onClick={() => fileInputRef.current?.click()}
-                                    className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 focus:outline-none mr-2"
-                                    title="Upload blood work files (CSV/PDF) or other documents"
-                                    disabled={isUploadingFile}
-                                >
-                                    <Paperclip size={18} />
-                                </button>
-
-                                {/* Hidden file input */}
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept=".csv,.pdf,.txt,.json,.xml,.jpg,.jpeg,.png"
-                                    onChange={handleFileUpload}
-                                    className="hidden"
-                                />
-
-                                <textarea
-                                    ref={inputRef}
-                                    className="flex-1 max-h-32 outline-none resize-none bg-transparent placeholder:text-gray-500"
-                                    placeholder="Message the AI..."
-                                    value={input}
-                                    onChange={(e) => setInput(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            if (input.trim() && !isLoading) {
-                                                handleSubmit(e);
-                                            }
-                                        }
-                                    }}
-                                    rows={1}
-                                ></textarea>
-                                <div className="flex items-center gap-1 ml-2">
-                                    <button
-                                        type="button"
-                                        onClick={toggleWebSearch}
-                                        className={`p-1 rounded-md ${useWebSearch ? 'bg-green-600 text-white' : 'hover:bg-gray-100 text-gray-500 hover:text-gray-700'} focus:outline-none`}
-                                        title={useWebSearch ? "Web search enabled" : "Enable web search"}
-                                    >
-                                        <Search size={18} />
-                                    </button>
-
-                                    {isLoading || isUploadingFile ? (
-                                        <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin"></div>
-                                    ) : (
-                                        <button
-                                            type="submit"
-                                            className="p-1 rounded-md hover:bg-gray-100 text-gray-500 hover:text-gray-700 focus:outline-none disabled:opacity-50"
-                                            disabled={!input.trim()}
-                                        >
-                                            <Send size={18} />
-                                        </button>
-                                    )}
+                {/* Messages area */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {messages.length === 0 ? (
+                        <div className="text-center text-gray-500 mt-16">
+                            <div className="text-6xl mb-4">🩺</div>
+                            <h2 className="text-2xl font-semibold mb-2">Welcome to your Diabetes AI Assistant</h2>
+                            <p className="text-lg mb-6">I can help you with blood sugar management, nutrition advice, and analyzing your health data.</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-2xl mx-auto">
+                                <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
+                                    <h3 className="font-semibold text-blue-800 mb-2">📊 Upload Blood Work</h3>
+                                    <p className="text-sm text-blue-600">Upload your lab results (CSV/PDF) and I'll provide personalized nutrition and insulin recommendations.</p>
+                                </div>
+                                <div className="p-4 bg-green-50 rounded-lg border border-green-200">
+                                    <h3 className="font-semibold text-green-800 mb-2">🍎 Nutrition Guidance</h3>
+                                    <p className="text-sm text-green-600">Ask about food choices, carb counting, and meal planning for diabetes management.</p>
+                                </div>
+                                <div className="p-4 bg-purple-50 rounded-lg border border-purple-200">
+                                    <h3 className="font-semibold text-purple-800 mb-2">💉 Insulin Help</h3>
+                                    <p className="text-sm text-purple-600">Get guidance on insulin dosing, timing, and management strategies.</p>
+                                </div>
+                                <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
+                                    <h3 className="font-semibold text-orange-800 mb-2">📈 Data Analysis</h3>
+                                    <p className="text-sm text-orange-600">Upload glucose readings, exercise data, or other health metrics for insights.</p>
                                 </div>
                             </div>
-                        </form>
-                        <div className="flex justify-between text-xs text-gray-500 mt-2">
-                            <div className="flex items-center gap-4">
-                                <button
-                                    onClick={handleClearChat}
-                                    className="flex items-center gap-1 hover:text-gray-700"
-                                    disabled={messages.length === 0 || isLoading}
-                                >
-                                    <Trash2 size={14} />
-                                    <span>Clear chat</span>
-                                </button>
-                                <span className="text-xs text-gray-400">
-                                    📎 Upload files (Blood work: CSV/PDF • General: TXT, JSON, XML, images)
-                                </span>
+                            <div className="mt-8 text-gray-600">
+                                <p className="text-sm">Try asking:</p>
+                                <div className="flex flex-wrap justify-center gap-2 mt-2">
+                                    {[
+                                        '"What should I eat for breakfast?"',
+                                        '"Analyze my blood work results"',
+                                        '"How much insulin should I take?"',
+                                        '"What\'s a good post-workout snack?"'
+                                    ].map((example, index) => (
+                                        <button
+                                            key={index}
+                                            onClick={() => setInput(example.replace(/"/g, ''))}
+                                            className="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full text-sm text-gray-700"
+                                        >
+                                            {example}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
+                        </div>
+                    ) : (
+                        messages.map((message) => (
+                            <ChatMessage
+                                key={message.id}
+                                id={message.id}
+                                text={message.text}
+                                sender={message.sender}
+                                timestamp={message.timestamp}
+                                isTyping={message.isTyping}
+                            />
+                        ))
+                    )}
+                    <div ref={messagesEndRef} />
+                </div>
+
+                {/* Input area */}
+                <div className="border-t border-gray-200 p-4 bg-white">
+                    <form onSubmit={handleSubmit} className="flex items-end gap-3">
+                        <div className="flex-1">
+                            <textarea
+                                ref={inputRef}
+                                value={input}
+                                onChange={(e) => setInput(e.target.value)}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                        e.preventDefault();
+                                        handleSubmit(e);
+                                    }
+                                }}
+                                placeholder="Type your message here... (Shift+Enter for new line)"
+                                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                                rows={1}
+                                style={{
+                                    minHeight: '50px',
+                                    maxHeight: '120px',
+                                    height: 'auto',
+                                }}
+                                onInput={(e) => {
+                                    const target = e.target as HTMLTextAreaElement;
+                                    target.style.height = 'auto';
+                                    target.style.height = Math.min(target.scrollHeight, 120) + 'px';
+                                }}
+                                disabled={isLoading}
+                            />
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="file"
+                                ref={fileInputRef}
+                                onChange={handleFileUpload}
+                                accept=".csv,.pdf,.txt,.json,.xml,.jpg,.jpeg,.png"
+                                className="hidden"
+                            />
                             <button
-                                onClick={handleSaveChat}
-                                className="flex items-center gap-1 hover:text-gray-700"
-                                disabled={messages.length === 0 || isLoading || isSaving}
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploadingFile}
+                                className="p-3 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Upload file"
                             >
-                                <Save size={14} />
-                                <span>{isSaving ? 'Saving...' : 'Save chat'}</span>
+                                <Paperclip size={20} />
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={isLoading || !input.trim()}
+                                className="p-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <Send size={20} />
                             </button>
                         </div>
-                    </div>
+                    </form>
                 </div>
             </div>
         </div>

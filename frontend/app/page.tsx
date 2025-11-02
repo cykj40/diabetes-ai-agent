@@ -8,7 +8,7 @@ export default function LandingPage() {
           <div className="text-2xl font-bold text-blue-600">DiabetesAI</div>
           <div className="space-x-4">
             <Link
-              href="/sign-in"
+              href="/signin"
               className="text-blue-600 hover:text-blue-800"
             >
               Sign In
@@ -25,7 +25,7 @@ export default function LandingPage() {
             and personalized recommendations.
           </p>
           <Link
-            href="/sign-up"
+            href="/signup"
             className="inline-block bg-blue-600 text-white px-8 py-3 rounded-lg 
                      text-lg font-semibold hover:bg-blue-700 transition-colors"
           >

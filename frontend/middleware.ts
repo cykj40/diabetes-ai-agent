@@ -31,9 +31,9 @@ export function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/signin', request.url));
     }
 
-    // If the user is already authenticated and tries to access signin/signup, redirect to dashboard
+    // If the user is already authenticated and tries to access signin/signup, redirect to chat
     if (isPublicPath && token && (path === '/signin' || path === '/signup')) {
-        return NextResponse.redirect(new URL('/dashboard', request.url));
+        return NextResponse.redirect(new URL('/agent', request.url));
     }
 
     return NextResponse.next();
@@ -43,9 +43,7 @@ export function middleware(request: NextRequest) {
 export const config = {
     matcher: [
         // Protected routes that require authentication
-        '/dashboard/:path*',
-        '/account/:path*',
-        '/settings/:path*',
+        '/agent/:path*',
 
         // Auth routes - handled differently if user is already logged in
         '/signin',

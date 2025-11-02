@@ -5,6 +5,8 @@ import { Send, ArrowLeft, Plus, Save, Trash2, Search, Paperclip, Edit3, MoreVert
 import { AnimatePresence } from 'framer-motion';
 import { useRouter } from 'next/navigation';
 import ChatMessage from './ChatMessage';
+import DexcomStatus from './DexcomStatus';
+import ClientOnly from './ClientOnly';
 
 interface Message {
     id: string;
@@ -748,17 +750,14 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                     <div className="space-y-2">
                         <button
                             className="w-full flex items-center gap-2 rounded-md p-2 text-sm hover:bg-gray-100"
-                            onClick={() => router.push('/conversations')}
-                        >
-                            <Search size={16} />
-                            <span>View All Conversations</span>
-                        </button>
-                        <button
-                            className="w-full flex items-center gap-2 rounded-md p-2 text-sm hover:bg-gray-100"
-                            onClick={() => router.push('/dashboard')}
+                            onClick={() => {
+                                // Sign out functionality
+                                document.cookie = 'auth_token=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;';
+                                router.push('/signin');
+                            }}
                         >
                             <ArrowLeft size={16} />
-                            <span>Back to Dashboard</span>
+                            <span>Sign Out</span>
                         </button>
                     </div>
                 </div>
@@ -775,6 +774,9 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                                 Session: {sessionId.substring(0, 8)}...
                             </span>
                         )}
+                        <ClientOnly>
+                            <DexcomStatus />
+                        </ClientOnly>
                     </div>
                     <div className="flex items-center gap-2">
                         <button

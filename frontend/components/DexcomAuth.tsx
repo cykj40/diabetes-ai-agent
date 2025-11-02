@@ -39,7 +39,7 @@ function DexcomAuthCallback({ onAuthSuccess }: { onAuthSuccess?: () => void }) {
             }
 
             onAuthSuccess?.();
-            router.push('/dashboard');
+            router.push('/agent');
         } catch (err) {
             setError(err instanceof Error ? err.message : 'An error occurred');
         } finally {

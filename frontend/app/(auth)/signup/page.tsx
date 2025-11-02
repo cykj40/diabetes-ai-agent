@@ -42,8 +42,8 @@ export default function SignUpPage() {
 
                 toast.success('Account created successfully')
 
-                // Redirect to dashboard
-                router.push('/dashboard')
+                // Redirect to chat
+                router.push('/agent')
             }
 
             return result

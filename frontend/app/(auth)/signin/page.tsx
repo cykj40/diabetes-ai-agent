@@ -42,8 +42,8 @@ export default function SignInPage() {
 
                 toast.success('Signed in successfully')
 
-                // Redirect to dashboard
-                router.push('/dashboard')
+                // Redirect to chat
+                router.push('/agent')
                 router.refresh()
             }
 

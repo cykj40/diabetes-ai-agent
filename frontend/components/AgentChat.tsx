@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import ChatMessage from './ChatMessage';
 import DexcomStatus from './DexcomStatus';
 import ClientOnly from './ClientOnly';
+import { getAuthToken } from '../lib/api';
 
 interface Message {
     id: string;
@@ -46,17 +47,6 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [chatName, setChatName] = useState<string>('');
 
-    // Function to get token from cookies
-    const getToken = () => {
-        const cookies = document.cookie.split(';');
-        for (const cookie of cookies) {
-            const [name, value] = cookie.trim().split('=');
-            if (name === 'auth_token') {
-                return value;
-            }
-        }
-        return null;
-    };
 
     // Focus input when component mounts
     useEffect(() => {
@@ -113,7 +103,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
 
     const fetchRecentSessions = async () => {
         try {
-            const token = getToken();
+            const token = getAuthToken();
             if (!token) return;
 
             const response = await fetch('/api/ai/chat-sessions/recent', {
@@ -174,7 +164,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         }
 
         try {
-            const token = getToken();
+            const token = getAuthToken();
             if (!token) return;
 
             const response = await fetch(`/api/ai/chat-sessions/${sessionIdToDelete}`, {
@@ -211,7 +201,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
     // Save edited title
     const handleSaveEdit = async (sessionIdToEdit: string) => {
         try {
-            const token = getToken();
+            const token = getAuthToken();
             if (!token) return;
 
             const response = await fetch(`/api/ai/chat-sessions/${sessionIdToEdit}`, {
@@ -307,7 +297,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
                     const bloodWorkResponse = await fetch('/api/blood-work/upload', {
                         method: 'POST',
                         headers: {
-                            'Authorization': `Bearer ${getToken()}`
+                            'Authorization': `Bearer ${getAuthToken()}`
                         },
                         body: formData,
                     });
@@ -492,7 +482,7 @@ export default function AgentChat({ sessionId = 'default' }: AgentChatProps) {
         setIsSaving(true);
 
         try {
-            const token = getToken();
+            const token = getAuthToken();
             if (!token) {
                 alert('Please sign in to save chats');
                 return;

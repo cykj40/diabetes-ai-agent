@@ -330,7 +330,8 @@ export class DexcomService {
                         code: code,
                         redirect_uri: this.redirectUri,
                         client_id: this.clientId,
-                        client_secret: this.clientSecret
+                        client_secret: this.clientSecret,
+                        code_verifier: codeVerifier  // THIS WAS MISSING!
                     }).toString(),
                     {
                         headers: {
@@ -496,14 +497,85 @@ export class DexcomService {
         }
     }
 
-    async getV3EGVs(count: number = 48): Promise<DexcomReading[]> {
+    /**
+     * Get the data range for available Dexcom data
+     * This tells you the earliest and latest timestamps for calibrations, EGVs, and events
+     * @param lastSyncTime Optional timestamp of the last sync to only get new data ranges
+     * @returns Data range information
+     */
+    async getDataRange(lastSyncTime?: Date): Promise<any> {
         if (!await this.ensureValidToken()) {
             throw new Error('Not authenticated with Dexcom');
         }
 
-        // Use current date instead of fixed date
-        const endDate = new Date();
-        const startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+        try {
+            const params: any = {};
+            if (lastSyncTime) {
+                params.lastSyncTime = this.formatDexcomDate(lastSyncTime);
+            }
+
+            console.log('Fetching Dexcom data range...');
+            const response = await axios.get(`${this.apiUrl}/v3/users/self/dataRange`, {
+                headers: {
+                    'Authorization': `Bearer ${this.tokenSet!.access_token}`,
+                    'Accept': 'application/json'
+                },
+                params
+            });
+
+            console.log('Data range retrieved successfully');
+            return response.data;
+        } catch (error: any) {
+            console.error('Error fetching Dexcom data range:', error.message);
+            if (error.response) {
+                console.error('Response status:', error.response.status);
+                console.error('Response data:', error.response.data);
+            }
+            throw error;
+        }
+    }
+
+    async getV3EGVs(count: number = 48, useDataRange: boolean = true): Promise<DexcomReading[]> {
+        if (!await this.ensureValidToken()) {
+            throw new Error('Not authenticated with Dexcom');
+        }
+
+        let startDate: Date;
+        let endDate: Date;
+
+        // Optionally use dataRange to get the most efficient date range
+        if (useDataRange) {
+            try {
+                console.log('Checking dataRange for optimal query window...');
+                const dataRange = await this.getDataRange();
+                
+                if (dataRange.egvs && dataRange.egvs.end) {
+                    // Use the end time from dataRange as our endDate (most recent data available)
+                    endDate = new Date(dataRange.egvs.end.systemTime);
+                    // Calculate startDate based on count
+                    startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+                    
+                    console.log('Using dataRange-optimized window:', {
+                        latestAvailable: dataRange.egvs.end.systemTime,
+                        queryStart: startDate.toISOString(),
+                        queryEnd: endDate.toISOString()
+                    });
+                } else {
+                    // Fallback to current time if dataRange doesn't have EGV data
+                    console.log('No EGV range in dataRange, using current time');
+                    endDate = new Date();
+                    startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+                }
+            } catch (error) {
+                console.log('Failed to fetch dataRange, using current time:', error);
+                endDate = new Date();
+                startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+            }
+        } else {
+            // Use current date if not using dataRange
+            endDate = new Date();
+            startDate = new Date(endDate.getTime() - (count * 5 * 60 * 1000));
+        }
 
         // Format dates in the required format for Dexcom API
         const formattedStartDate = this.formatDexcomDate(startDate);

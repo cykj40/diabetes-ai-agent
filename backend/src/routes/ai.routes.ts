@@ -383,6 +383,41 @@ export default async function aiRoutes(fastify: FastifyInstance) {
         }
     });
 
+    // Create a new chat session
+    fastify.post('/chat-sessions', async (request: FastifyRequest<{ Body: { title: string; userId: string } }>, reply: FastifyReply) => {
+        try {
+            const userId = extractUserId(request);
+            const { title } = request.body;
+
+            if (!title) {
+                return reply.code(400).send({
+                    error: 'Title is required'
+                });
+            }
+
+            const newSession = await prisma.chatSession.create({
+                data: {
+                    userId,
+                    title
+                }
+            });
+
+            return {
+                id: newSession.id,
+                title: newSession.title,
+                userId: newSession.userId,
+                createdAt: newSession.createdAt.toISOString(),
+                updatedAt: newSession.updatedAt.toISOString()
+            };
+        } catch (error) {
+            console.error('Error creating chat session:', error);
+            return reply.code(500).send({
+                error: 'Failed to create chat session',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
+
     // Get recent chat sessions (for sidebar)
     fastify.get('/chat-sessions/recent', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
@@ -416,34 +451,6 @@ export default async function aiRoutes(fastify: FastifyInstance) {
             console.error('Error fetching recent chat sessions:', error);
             return reply.code(500).send({
                 error: 'Failed to fetch recent chat sessions',
-                details: error instanceof Error ? error.message : 'Unknown error'
-            });
-        }
-    });
-
-    // Create a new chat session
-    fastify.post<{ Body: { title?: string } }>('/chat-sessions', async (request: FastifyRequest, reply: FastifyReply) => {
-        try {
-            const userId = extractUserId(request);
-            const { title } = request.body as { title?: string };
-
-            const session = await prisma.chatSession.create({
-                data: {
-                    userId,
-                    title: title || 'New Conversation'
-                }
-            });
-
-            return {
-                id: session.id,
-                title: session.title,
-                timestamp: session.createdAt.toISOString(),
-                messageCount: 0
-            };
-        } catch (error) {
-            console.error('Error creating chat session:', error);
-            return reply.code(500).send({
-                error: 'Failed to create chat session',
                 details: error instanceof Error ? error.message : 'Unknown error'
             });
         }

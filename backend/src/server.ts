@@ -99,7 +99,10 @@ app.register(fastifyCors, {
     maxAge: 86400
 });
 
-app.register(fastifyCookie);
+app.register(fastifyCookie, {
+    secret: process.env.SESSION_SECRET || 'your-secret-key' // Use same secret for signed cookies
+});
+
 app.register(fastifySession, {
     secret: process.env.SESSION_SECRET || 'your-secret-key',
     cookie: {
@@ -194,9 +197,24 @@ app.get('/auth/dexcom/login', async (request: FastifyRequest, reply: FastifyRepl
         app.log.info('Initiating Dexcom OAuth flow...');
         const { url, codeVerifier, state } = await dexcomService.getAuthUrl();
 
-        // Store PKCE and state in session
-        request.session.codeVerifier = codeVerifier;
-        request.session.state = state;
+        // Store PKCE and state in secure, signed cookies
+        reply.setCookie('dexcom_code_verifier', codeVerifier, {
+            signed: true,
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            path: '/',
+            maxAge: 600 // 10 minutes - enough time for OAuth flow
+        });
+        
+        reply.setCookie('dexcom_state', state, {
+            signed: true,
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'lax',
+            path: '/',
+            maxAge: 600 // 10 minutes
+        });
 
         app.log.info({ url }, 'Redirecting to Dexcom authorization URL');
         return reply.redirect(url);
@@ -215,26 +233,27 @@ app.get('/auth/dexcom/callback', async (request: FastifyRequest, reply: FastifyR
         return reply.status(400).send({ error: 'Missing authorization code or state' });
     }
 
-    // Get code verifier from session
-    const codeVerifier = request.session.codeVerifier;
-    const sessionState = request.session.state;
+    // Get code verifier and state from signed cookies
+    const codeVerifier = request.unsignCookie(request.cookies.dexcom_code_verifier || '')?.value;
+    const sessionState = request.unsignCookie(request.cookies.dexcom_state || '')?.value;
 
     app.log.info({
         hasCodeVerifier: !!codeVerifier,
         codeVerifierValue: codeVerifier ? 'present' : 'missing',
         hasSessionState: !!sessionState,
         sessionStateValue: sessionState || 'missing',
-        stateMatches: state === sessionState
-    }, 'Session data check');
+        stateMatches: state === sessionState,
+        cookies: Object.keys(request.cookies)
+    }, 'Cookie data check');
 
     if (!codeVerifier) {
-        app.log.error('Missing code verifier in session');
-        return reply.status(400).send({ error: 'Missing code verifier in session' });
+        app.log.error('Missing code verifier in cookies');
+        return reply.status(400).send({ error: 'Missing code verifier. Please try authenticating again.' });
     }
 
     if (!sessionState || state !== sessionState) {
-        app.log.error('State mismatch or missing session state');
-        return reply.status(400).send({ error: 'State mismatch or missing session state' });
+        app.log.error('State mismatch or missing state in cookies');
+        return reply.status(400).send({ error: 'State validation failed. Please try authenticating again.' });
     }
 
     try {
@@ -247,10 +266,10 @@ app.get('/auth/dexcom/callback', async (request: FastifyRequest, reply: FastifyR
 
         if (success) {
             app.log.info('Successfully authenticated with Dexcom');
-            // Clear session data
-            request.session.codeVerifier = undefined;
-            request.session.state = undefined;
-            return reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/dashboard?auth=success`);
+            // Clear OAuth cookies
+            reply.clearCookie('dexcom_code_verifier', { path: '/' });
+            reply.clearCookie('dexcom_state', { path: '/' });
+            return reply.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/agent?auth=success`);
         } else {
             app.log.error('Failed to authenticate with Dexcom');
             return reply.status(401).send({ error: 'Authentication failed' });

@@ -3,6 +3,8 @@
 import { z } from 'zod'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import { apiRequest } from '../../lib/api'
+import { mockDelay } from '../lib/utils'
 
 // Define Zod schema for signin validation
 const SignInSchema = z.object({
@@ -33,24 +35,7 @@ export type ActionResponse = {
     token?: string
 }
 
-// Helper function to add a delay
-async function mockDelay(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-}
 
-// Create a function to make authenticated requests to your backend
-async function apiRequest(endpoint: string, method: string, data?: any) {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
-    const response = await fetch(`${backendUrl}${endpoint}`, {
-        method,
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: data ? JSON.stringify(data) : undefined,
-    });
-
-    return response.json();
-}
 
 export async function signIn(formData: FormData): Promise<ActionResponse> {
     try {
@@ -74,7 +59,7 @@ export async function signIn(formData: FormData): Promise<ActionResponse> {
         }
 
         // Call the backend API
-        const result = await apiRequest('/api/auth/signin', 'POST', data);
+        const result = await apiRequest('/api/auth/signin', { method: 'POST', body: JSON.stringify(data) });
 
         // If successful, store the token in a cookie
         if (result.success && result.token) {
@@ -120,9 +105,12 @@ export async function signUp(formData: FormData): Promise<ActionResponse> {
         }
 
         // Call the backend API
-        const result = await apiRequest('/api/auth/signup', 'POST', {
-            email: data.email,
-            password: data.password,
+        const result = await apiRequest('/api/auth/signup', { 
+            method: 'POST', 
+            body: JSON.stringify({
+                email: data.email,
+                password: data.password,
+            })
         });
 
         // If successful, return the token for client-side cookie setting
@@ -151,7 +139,7 @@ export async function signOut(): Promise<void> {
         // Cookie will be deleted on client side
 
         // Call the signout endpoint (optional)
-        await apiRequest('/api/auth/signout', 'POST');
+        await apiRequest('/api/auth/signout', { method: 'POST' });
     } catch (error) {
         console.error('Sign out error:', error)
         throw new Error('Failed to sign out')

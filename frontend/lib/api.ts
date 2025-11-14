@@ -3,6 +3,7 @@
  */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
 
 /**
  * Get the authentication token from cookies
@@ -89,4 +90,58 @@ export const api = {
             apiRequest('/api/auth/signup', { method: 'POST', body: JSON.stringify(data) }),
         signout: () => apiRequest('/api/auth/signout', { method: 'POST' }),
     }
-}; 
+};
+
+/**
+ * Extract auth token from request headers or cookies (for API routes)
+ */
+export function extractAuthToken(request: Request): string | null {
+    // First check for Authorization header
+    const authHeader = request.headers.get('authorization');
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.substring(7);
+    }
+
+    // If no header, try to get from cookies
+    const cookieHeader = request.headers.get('cookie');
+    if (cookieHeader) {
+        const cookies = cookieHeader.split(';');
+        for (const cookie of cookies) {
+            const [name, value] = cookie.trim().split('=');
+            if (name === 'auth_token') {
+                return value;
+            }
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Validate auth token and get user data (for API routes)
+ */
+export async function validateAuthToken(token: string): Promise<{ userId: string } | null> {
+    try {
+        const userResponse = await fetch(`${BACKEND_URL}/api/auth/me`, {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        if (!userResponse.ok) {
+            return null;
+        }
+
+        const userData = await userResponse.json();
+        const userId = userData.user?.id;
+
+        if (!userId) {
+            return null;
+        }
+
+        return { userId };
+    } catch (error) {
+        console.error('Error validating auth token:', error);
+        return null;
+    }
+} 

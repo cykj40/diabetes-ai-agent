@@ -1,4 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { PelotonClient, getPelotonSessionCookie } from '../tools/peloton/pelotonClient';
 import { getMuscleImpactTool } from '../tools/peloton/muscleImpactTool';
 import { getFetchPelotonWorkoutDataTool } from '../tools/peloton/fetchPelotonWorkoutDataTool';
@@ -23,7 +24,7 @@ interface PelotonCredentialsBody {
     password: string;
 }
 
-export default async function pelotonRoutes(fastify: FastifyInstance) {
+const pelotonRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     // Test Peloton connection
     fastify.get('/test-connection', async (request, reply) => {
         try {
@@ -401,7 +402,9 @@ export default async function pelotonRoutes(fastify: FastifyInstance) {
             });
         }
     });
-}
+};
+
+export default pelotonRoutes;
 
 /**
  * Get muscle groups worked by fitness discipline

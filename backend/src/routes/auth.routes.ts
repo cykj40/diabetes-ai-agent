@@ -1,8 +1,8 @@
-import { FastifyInstance } from 'fastify';
+import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { Type } from '@sinclair/typebox';
 import { AuthService } from '../services/auth.service';
 
-export default async function authRoutes(fastify: FastifyInstance) {
+const authRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     const authService = new AuthService();
 
     const ErrorResponse = Type.Object({
@@ -175,4 +175,6 @@ export default async function authRoutes(fastify: FastifyInstance) {
             message: 'Logged out successfully'
         };
     });
-}
+};
+
+export default authRoutes; 

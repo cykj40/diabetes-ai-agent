@@ -2,8 +2,7 @@ import {
     fastify,
     FastifyRequest,
     FastifyReply,
-    FastifyError,
-    FastifyInstance
+    FastifyError
 } from 'fastify';
 import { TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
 import fastifyCors from '@fastify/cors';
@@ -61,7 +60,7 @@ Object.entries(process.env).forEach(([key, value]) => {
 });
 
 // Create Fastify instance with TypeBox
-const app: FastifyInstance = fastify({
+const app = fastify({
     logger: {
         level: 'info',
         transport: {

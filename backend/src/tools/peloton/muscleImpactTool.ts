@@ -14,8 +14,8 @@ export function getMuscleImpactTool(userId: string): DynamicStructuredTool {
         description: "Analyzes muscle impact from recent Peloton workouts. Provides insights into which muscle groups have been worked, balance of training, and recommendations for future workouts.",
         schema: z.object({
             days: z.number().optional().describe("Number of days to analyze, defaults to 7"),
-        }),
-        func: async ({ days = 7 }) => {
+        }) as any,
+        func: async ({ days = 7 }: any) => {
             try {
                 const sessionCookie = await getUserPelotonSessionCookie(userId);
 

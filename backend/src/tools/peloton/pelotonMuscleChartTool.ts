@@ -14,8 +14,8 @@ export function getPelotonMuscleChartTool(userId: string): DynamicStructuredTool
         description: "Fetches muscle activity data from Peloton to generate a visual representation of muscle groups engaged over a specified period. Use this to visualize which muscle groups have been worked most in recent workouts.",
         schema: z.object({
             period: z.enum(['7_days', '30_days']).optional().describe("Period to analyze, either '7_days' or '30_days'. Defaults to '7_days'"),
-        }),
-        func: async ({ period = '7_days' }) => {
+        }) as any,
+        func: async ({ period = '7_days' }: any) => {
             try {
                 const sessionCookie = await getUserPelotonSessionCookie(userId);
 

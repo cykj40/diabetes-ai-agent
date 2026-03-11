@@ -12,7 +12,7 @@ export function getTestPelotonConnectionTool(userId: string): DynamicStructuredT
     return new DynamicStructuredTool({
         name: "test_peloton_connection",
         description: "Tests the connection to the Peloton API. Use this to verify that the Peloton account is properly connected and accessible.",
-        schema: z.object({}),
+        schema: z.object({}) as any,
         func: async () => {
             try {
                 const sessionCookie = await getUserPelotonSessionCookie(userId);

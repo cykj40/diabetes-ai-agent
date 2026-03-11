@@ -1,15 +1,34 @@
 import { ChatOpenAI } from '@langchain/openai';
-import { PromptTemplate } from '@langchain/core/prompts';
-import { RunnableSequence } from '@langchain/core/runnables';
 import { MemoryVectorStore } from 'langchain/vectorstores/memory';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import {
-    StructuredOutputParser,
-} from '@langchain/core/output_parsers';
 import { Document } from 'langchain/document';
 import { z } from 'zod';
 import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { BaseMessage } from '@langchain/core/messages';
+
+const bloodSugarAnalysisSchema = z.object({
+    glucoseTrend: z
+        .string()
+        .describe('The overall trend of blood glucose levels (e.g., rising, falling, stable).'),
+    anomalyDetected: z
+        .boolean()
+        .describe('Whether an anomaly is detected in the blood sugar data.'),
+    anomalyDescription: z
+        .string()
+        .optional()
+        .describe('Description of the anomaly if detected.'),
+    recommendations: z
+        .string()
+        .describe('Actionable recommendations based on the blood sugar data.'),
+    summary: z
+        .string()
+        .describe('Quick summary of the blood sugar patterns.'),
+    riskLevel: z
+        .number()
+        .describe(
+            'Risk level on a scale from 0 to 10, where 0 is no risk and 10 is extremely high risk.'
+        ),
+});
 
 export class AIService {
     private readonly openaiApiKey: string;
@@ -31,43 +50,30 @@ export class AIService {
         });
     }
 
-    // Schema for Blood Sugar Analysis
-    private parser = StructuredOutputParser.fromZodSchema(
-        z.object({
-            glucoseTrend: z
-                .string()
-                .describe('The overall trend of blood glucose levels (e.g., rising, falling, stable).'),
-            anomalyDetected: z
-                .boolean()
-                .describe('Whether an anomaly is detected in the blood sugar data.'),
-            anomalyDescription: z
-                .string()
-                .optional()
-                .describe('Description of the anomaly if detected.'),
-            recommendations: z
-                .string()
-                .describe('Actionable recommendations based on the blood sugar data.'),
-            summary: z
-                .string()
-                .describe('Quick summary of the blood sugar patterns.'),
-            riskLevel: z
-                .number()
-                .describe(
-                    'Risk level on a scale from 0 to 10, where 0 is no risk and 10 is extremely high risk.'
-                ),
-        })
-    );
+    private readonly formatInstructions = `Return valid JSON with exactly these fields:
+{
+  "glucoseTrend": "string",
+  "anomalyDetected": true,
+  "anomalyDescription": "string or omitted",
+  "recommendations": "string",
+  "summary": "string",
+  "riskLevel": 0
+}`;
+
+    private parseAnalysis(output: string) {
+        const jsonMatch = output.match(/```json\s*([\s\S]*?)\s*```/i) ?? output.match(/```\s*([\s\S]*?)\s*```/i);
+        const jsonText = (jsonMatch?.[1] ?? output).trim();
+        return bloodSugarAnalysisSchema.parse(JSON.parse(jsonText));
+    }
 
     // Prompt for Blood Sugar Analysis
     private async getPrompt(content: string): Promise<BaseMessage[]> {
-        const format_instructions = this.parser.getFormatInstructions();
-
         return [
             new SystemMessage('You are a diabetes management AI assistant. Analyze blood sugar data and provide structured insights.'),
             new HumanMessage(`Analyze the following blood sugar data. Follow the instructions and format your response to match the format instructions, no matter what!
 
 Format Instructions:
-${format_instructions}
+${this.formatInstructions}
 
 Data:
 ${content}`)
@@ -81,20 +87,13 @@ ${content}`)
         const output = response.content.toString();
 
         try {
-            return this.parser.parse(output);
+            return this.parseAnalysis(output);
         } catch (e) {
-            // Create a new chain to fix parsing errors
-            const fixingChain = RunnableSequence.from([
-                async (input: string) => {
-                    const result = await this.model.invoke([
-                        new SystemMessage('You are a helpful assistant that formats responses according to the specified schema.'),
-                        new HumanMessage(`Please format the following response according to the schema: ${this.parser.getFormatInstructions()}\n\nResponse to format: ${input}`)
-                    ]);
-                    return result.content.toString();
-                },
-                this.parser
+            const result = await this.model.invoke([
+                new SystemMessage('You are a helpful assistant that formats responses according to the specified schema.'),
+                new HumanMessage(`Please format the following response according to the schema: ${this.formatInstructions}\n\nResponse to format: ${output}`)
             ]);
-            return await fixingChain.invoke(output);
+            return this.parseAnalysis(result.content.toString());
         }
     }
 

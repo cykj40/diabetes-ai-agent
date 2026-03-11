@@ -40,14 +40,14 @@ const chartSchema = z.object({
     metric: z.enum(['readings', 'time_in_range', 'daily_average']).describe('What metric to visualize')
 });
 
-export function getChartTool(userId: string) {
+export function getChartTool(userId: string): DynamicStructuredTool {
     const dexcomService = new DexcomService();
 
     return new DynamicStructuredTool({
         name: "create_chart",
         description: "Create a chart visualization of blood sugar data. Returns chart configuration that can be rendered by Chart.js.",
         schema: chartSchema as any,
-        func: async ({ chartType, timeRange, title, showTargetRange, metric }) => {
+        func: async ({ chartType, timeRange, title, showTargetRange, metric }: any) => {
             try {
                 const now = new Date();
                 let startDate = new Date();

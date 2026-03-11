@@ -1,4 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { AIService } from '../services/ai.service';
 import { BloodSugarEmbeddingService } from '../services/blood-sugar-embedding.service';
 import { DexcomService } from '../services/dexcom.service';
@@ -63,7 +64,7 @@ function extractUserId(request: FastifyRequest): string {
     return 'default-user';
 }
 
-export default async function aiRoutes(fastify: FastifyInstance) {
+const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     const aiService = new AIService();
     const bloodSugarEmbeddingService = new BloodSugarEmbeddingService();
     const dexcomService = new DexcomService();
@@ -607,4 +608,6 @@ export default async function aiRoutes(fastify: FastifyInstance) {
             });
         }
     });
-} 
+};
+
+export default aiRoutes;

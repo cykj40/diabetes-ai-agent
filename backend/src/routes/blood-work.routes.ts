@@ -1,4 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { BloodWorkService } from '../services/blood-work.service';
 
 const bloodWorkService = new BloodWorkService();
@@ -22,7 +23,7 @@ function extractUserId(request: FastifyRequest): string {
     return 'default-user';
 }
 
-export default async function bloodWorkRoutes(fastify: FastifyInstance) {
+const bloodWorkRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
     /**
      * @route POST /api/blood-work/upload
      * @desc Upload and parse blood work file (CSV or PDF)
@@ -233,4 +234,6 @@ export default async function bloodWorkRoutes(fastify: FastifyInstance) {
             });
         }
     });
-} 
+};
+
+export default bloodWorkRoutes;

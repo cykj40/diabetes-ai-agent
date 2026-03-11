@@ -311,7 +311,7 @@ export class BloodSugarEmbeddingService {
                         ]
                         : [])
                 ],
-                recommendations: analysis.recommendations.split('\n').filter(r => r.trim().length > 0)
+                recommendations: analysis.recommendations.split('\n').filter((r: string) => r.trim().length > 0)
             };
         } catch (error) {
             console.error('Error generating blood sugar insights:', error);

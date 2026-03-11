@@ -503,7 +503,7 @@ export class DexcomService {
      * @param lastSyncTime Optional timestamp of the last sync to only get new data ranges
      * @returns Data range information
      */
-    async getDataRange(lastSyncTime?: Date): Promise<any> {
+    private async getLegacyDataRange(lastSyncTime?: Date): Promise<DataRangeResponse> {
         if (!await this.ensureValidToken()) {
             throw new Error('Not authenticated with Dexcom');
         }
@@ -779,20 +779,7 @@ export class DexcomService {
             } catch (v3Error) {
                 console.error('Error using v3 data range API, falling back to v2:', v3Error);
 
-                // Fall back to v2 API
-                const params: { lastSyncTime?: string } = {};
-                if (lastSyncTime) {
-                    params.lastSyncTime = lastSyncTime.toISOString();
-                }
-
-                const response = await axios.get<DataRangeResponse>(`${this.apiUrl}/v2/users/self/dataRange`, {
-                    headers: {
-                        'Authorization': `Bearer ${this.tokenSet!.access_token}`
-                    },
-                    params
-                });
-
-                return response.data;
+                return await this.getLegacyDataRange(lastSyncTime);
             }
         } catch (error) {
             console.error('Failed to fetch Dexcom data range:', error);

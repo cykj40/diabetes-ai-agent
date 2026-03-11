@@ -1,4 +1,5 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
 import { PrismaClient } from '@prisma/client';
 import { unlink, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -28,7 +29,7 @@ interface QueryParams {
     search?: string;
 }
 
-export default async function fileRoutes(fastify: FastifyInstance) {
+const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
 
     // File upload endpoint
     fastify.post('/upload', async (request: FastifyRequest, reply: FastifyReply) => {
@@ -449,4 +450,6 @@ export default async function fileRoutes(fastify: FastifyInstance) {
             });
         }
     });
-} 
+};
+
+export default fileRoutes;

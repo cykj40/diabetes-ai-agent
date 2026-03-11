@@ -112,14 +112,14 @@ Remember to be supportive and helpful, focusing on providing actionable insights
             ]);
 
             // Get the tools to use
-            const tools = this.agentToolsService.getTools();
+            const tools = this.agentToolsService.getTools() as any[];
 
             // Create the agent with the tools
             const agent = await createOpenAIFunctionsAgent({
                 llm: this.llm,
                 tools,
                 prompt
-            });
+            } as any);
 
             this.agent = new AgentExecutor({
                 agent,
@@ -129,7 +129,7 @@ Remember to be supportive and helpful, focusing on providing actionable insights
                 maxIterations: 7,
                 verbose: true,
                 handleParsingErrors: true,
-            });
+            } as any);
 
             // Create a runnable with chat history
             const withMemory = new RunnableWithMessageHistory({

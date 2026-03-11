@@ -9,13 +9,15 @@ import { getUserPelotonSessionCookie } from '../../services/pelotonService';
  * @returns A tool that can be used by the agent to fetch workout data
  */
 export function getFetchPelotonWorkoutDataTool(userId: string): DynamicStructuredTool {
+    const schema = z.object({
+        limit: z.number().optional().describe("Number of workouts to fetch, defaults to 10"),
+    });
+
     return new DynamicStructuredTool({
         name: "fetch_peloton_workout_data",
         description: "Fetches recent workout data from Peloton, including duration, type, calories burned, and timestamps. Use this to get exercise information that can be correlated with blood sugar patterns.",
-        schema: z.object({
-            limit: z.number().optional().describe("Number of workouts to fetch, defaults to 10"),
-        }),
-        func: async ({ limit = 10 }) => {
+        schema: schema as any,
+        func: async ({ limit = 10 }: any) => {
             try {
                 const sessionCookie = await getUserPelotonSessionCookie(userId);
                 console.log(`Using Peloton session cookie: ${sessionCookie ? sessionCookie.substring(0, 10) + '...' : 'undefined'}`);

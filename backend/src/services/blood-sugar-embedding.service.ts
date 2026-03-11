@@ -1,35 +1,21 @@
 import { AIService } from './ai.service';
-import { PineconeService } from './pinecone';
+import PgVectorService from './pgvector.service';
 import { DexcomReading } from './dexcom.service';
-import { PrismaClient } from '@prisma/client';
+import { db, bloodSugarReading } from '../db';
+import { eq, and, gte, lte, desc } from 'drizzle-orm';
 
 export class BloodSugarEmbeddingService {
     private aiService: AIService;
-    private prisma: PrismaClient;
-    private readonly indexName = 'blood-sugar-data';
-    private readonly embeddingDimension = 1536; // OpenAI embedding dimension
 
     constructor() {
         this.aiService = new AIService();
-        this.prisma = new PrismaClient();
     }
 
     async initialize() {
         try {
-            // Initialize Pinecone service
-            await PineconeService.initialize();
-
-            // Check if index exists, create if not
-            const indexes = await PineconeService.listIndexes();
-            const indexExists = indexes.some((index: any) => index === this.indexName);
-
-            if (!indexExists) {
-                console.log(`Creating new Pinecone index: ${this.indexName}`);
-                await PineconeService.createIndex(this.indexName, this.embeddingDimension);
-                console.log('Index created successfully');
-            } else {
-                console.log(`Pinecone index ${this.indexName} already exists`);
-            }
+            // Initialize pgvector extension
+            await PgVectorService.initialize();
+            console.log('BloodSugarEmbeddingService initialized successfully');
         } catch (error) {
             console.error('Failed to initialize BloodSugarEmbeddingService:', error);
             throw error;
@@ -37,7 +23,7 @@ export class BloodSugarEmbeddingService {
     }
 
     /**
-     * Process and store blood sugar readings in Pinecone
+     * Process and store blood sugar readings in pgvector
      * @param readings Array of Dexcom readings
      * @param userId User ID for the readings
      */
@@ -65,7 +51,7 @@ export class BloodSugarEmbeddingService {
     }
 
     /**
-     * Process a batch of readings and store them in Pinecone
+     * Process a batch of readings and store them in pgvector
      */
     private async processReadingBatch(readings: DexcomReading[], userId: string) {
         try {
@@ -80,10 +66,11 @@ export class BloodSugarEmbeddingService {
             // Generate embeddings
             const embeddings = await this.aiService.generateEmbeddings(textRepresentations);
 
-            // Prepare vectors for Pinecone
+            // Prepare vectors for pgvector
             const vectors = readings.map((reading, index) => ({
                 id: `${userId}-${new Date(reading.timestamp).getTime()}`,
                 values: embeddings[index],
+                content: textRepresentations[index],
                 metadata: {
                     userId,
                     value: reading.value,
@@ -93,8 +80,8 @@ export class BloodSugarEmbeddingService {
                 }
             }));
 
-            // Store in Pinecone
-            await PineconeService.upsert(this.indexName, vectors);
+            // Store in pgvector
+            await PgVectorService.upsert('blood_sugar', vectors);
 
             // Also store in database for backup/reference
             await this.storeReadingsInDatabase(readings, userId);
@@ -111,63 +98,43 @@ export class BloodSugarEmbeddingService {
      */
     private async storeReadingsInDatabase(readings: DexcomReading[], userId: string) {
         try {
-            // Check if the BloodSugarReading table has the userId column
-            let hasUserIdColumn = true;
-            try {
-                // Try a simple query to check if userId column exists
-                await this.prisma.$queryRaw`SELECT "userId" FROM "BloodSugarReading" LIMIT 1`;
-            } catch (error: any) {
-                if (error.message && error.message.includes('column "userId" does not exist')) {
-                    console.log('The userId column does not exist in the BloodSugarReading table. Skipping database storage.');
-                    hasUserIdColumn = false;
-                    return; // Skip database operations
-                }
-            }
-
-            if (!hasUserIdColumn) {
-                return; // Skip database operations
-            }
-
             // Store each reading in the database
             for (const reading of readings) {
                 const timestamp = new Date(reading.timestamp);
                 const sessionId = `session-${Date.now()}`;
 
                 try {
-                    // Use a more basic query that doesn't rely on userId if it's not available
-                    const existingReadings = await this.prisma.$queryRaw<Array<{ id: string }>>`
-                        SELECT id FROM "BloodSugarReading" 
-                        WHERE "timestamp" = ${timestamp}
-                    `;
+                    // Check if reading already exists for this user and timestamp
+                    const existingReadings = await db
+                        .select()
+                        .from(bloodSugarReading)
+                        .where(
+                            and(
+                                eq(bloodSugarReading.userId, userId),
+                                eq(bloodSugarReading.timestamp, timestamp)
+                            )
+                        );
 
-                    const existingReading = existingReadings.length > 0 ? existingReadings[0] : null;
-
-                    if (existingReading) {
+                    if (existingReadings.length > 0) {
                         // Update existing reading
-                        await this.prisma.bloodSugarReading.update({
-                            where: { id: existingReading.id },
-                            data: {
+                        await db
+                            .update(bloodSugarReading)
+                            .set({
                                 value: reading.value,
                                 trend: reading.trend,
-                                timestamp: timestamp
-                            }
-                        });
+                                timestamp: timestamp,
+                                isEmbedded: true
+                            })
+                            .where(eq(bloodSugarReading.id, existingReadings[0].id));
                     } else {
                         // Create new reading
-                        const createData: any = {
+                        await db.insert(bloodSugarReading).values({
                             sessionId,
+                            userId,
                             value: reading.value,
                             trend: reading.trend,
-                            timestamp: timestamp
-                        };
-
-                        // Only add userId if it exists and column exists
-                        if (hasUserIdColumn && userId) {
-                            createData.userId = userId;
-                        }
-
-                        await this.prisma.bloodSugarReading.create({
-                            data: createData
+                            timestamp: timestamp,
+                            isEmbedded: true
                         });
                     }
                 } catch (error: any) {
@@ -192,17 +159,15 @@ export class BloodSugarEmbeddingService {
             // Generate embedding for query
             const queryEmbedding = await this.aiService.generateEmbeddings([query]);
 
-            // Query Pinecone
-            const results = await PineconeService.query(
-                this.indexName,
+            // Query pgvector
+            const results = await PgVectorService.query(
+                'blood_sugar',
                 queryEmbedding[0],
-                topK
+                topK,
+                { userId }
             );
 
-            // Filter results by userId if needed
-            return results.matches.filter((match: any) =>
-                match.metadata && match.metadata.userId === userId
-            );
+            return results.matches;
         } catch (error) {
             console.error('Error querying similar readings:', error);
             throw error;
@@ -214,27 +179,26 @@ export class BloodSugarEmbeddingService {
      */
     async getEmbeddedReadings(userId: string, startDate?: Date, endDate?: Date) {
         try {
-            // Query the database for readings that have been embedded
-            // Note: We're not filtering by userId due to schema issues
-            console.log(`Getting embedded readings for time period: ${startDate?.toISOString()} to ${endDate?.toISOString()}`);
+            console.log(`Getting embedded readings for user ${userId}, time period: ${startDate?.toISOString()} to ${endDate?.toISOString()}`);
 
-            const filter: any = {
-                isEmbedded: true
-            };
+            // Build the where conditions
+            const conditions = [
+                eq(bloodSugarReading.userId, userId),
+                eq(bloodSugarReading.isEmbedded, true)
+            ];
 
-            if (startDate || endDate) {
-                filter.timestamp = {};
-                if (startDate) filter.timestamp.gte = startDate;
-                if (endDate) filter.timestamp.lte = endDate;
+            if (startDate) {
+                conditions.push(gte(bloodSugarReading.timestamp, startDate));
+            }
+            if (endDate) {
+                conditions.push(lte(bloodSugarReading.timestamp, endDate));
             }
 
-            console.log('Using filter:', JSON.stringify(filter));
-            const readings = await this.prisma.bloodSugarReading.findMany({
-                where: filter,
-                orderBy: {
-                    timestamp: 'desc'
-                }
-            });
+            const readings = await db
+                .select()
+                .from(bloodSugarReading)
+                .where(and(...conditions))
+                .orderBy(desc(bloodSugarReading.timestamp));
 
             console.log(`Found ${readings.length} embedded readings`);
             return readings;

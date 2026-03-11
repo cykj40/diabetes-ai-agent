@@ -1,15 +1,15 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { FastifyPluginAsyncTypebox } from '@fastify/type-provider-typebox';
-import { PrismaClient } from '@prisma/client';
 import { unlink, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { db, uploadedFile } from '../db';
+import { eq, and, or, desc, count, sum, sql, like } from 'drizzle-orm';
 
 const pdfParse = require('pdf-parse');
 const { createWorker } = require('tesseract.js');
 const pdf2pic = require('pdf2pic');
-const prisma = new PrismaClient();
 
 interface FileParams {
     id: string;
@@ -160,33 +160,31 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             }
 
             // Save file metadata to database
-            const uploadedFile = await prisma.uploadedFile.create({
-                data: {
-                    userId: userId,
-                    sessionId: sessionId,
-                    fileName: filename,
-                    uniqueName: uniqueFileName,
-                    fileType: fileExtension,
-                    filePath: `/uploads/${sessionId}/${uniqueFileName}`,
-                    fileSize: fileBuffer.length,
-                    mimeType: mimetype,
-                    content: content.substring(0, 10000), // Limit content to 10k characters
-                    tags: [], // Default empty tags
-                    isProcessed: false
-                }
-            });
+            const [uploadedFileRecord] = await db.insert(uploadedFile).values({
+                userId: userId,
+                sessionId: sessionId,
+                fileName: filename,
+                uniqueName: uniqueFileName,
+                fileType: fileExtension,
+                filePath: `/uploads/${sessionId}/${uniqueFileName}`,
+                fileSize: fileBuffer.length,
+                mimeType: mimetype,
+                content: content.substring(0, 10000), // Limit content to 10k characters
+                tags: [], // Default empty tags
+                isProcessed: false
+            }).returning();
 
-            console.log('File saved to database with ID:', uploadedFile.id);
+            console.log('File saved to database with ID:', uploadedFileRecord.id);
 
             const fileInfo = {
-                id: uploadedFile.id,
+                id: uploadedFileRecord.id,
                 name: filename,
                 originalName: filename,
                 uniqueName: uniqueFileName,
                 type: fileExtension,
                 size: fileBuffer.length,
                 path: `/uploads/${sessionId}/${uniqueFileName}`,
-                uploadedAt: uploadedFile.createdAt.toISOString(),
+                uploadedAt: uploadedFileRecord.createdAt.toISOString(),
                 content: content.substring(0, 10000)
             };
 
@@ -194,7 +192,7 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                 success: true,
                 message: 'File uploaded successfully',
                 fileInfo,
-                attachmentId: uploadedFile.id
+                attachmentId: uploadedFileRecord.id
             };
 
         } catch (error) {
@@ -227,36 +225,44 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                 search
             } = request.query;
 
-            const skip = (page - 1) * limit;
+            const offset = (page - 1) * limit;
 
             // Build where clause
-            const where: any = { userId };
+            const conditions = [eq(uploadedFile.userId, userId)];
 
             if (fileType) {
-                where.fileType = fileType;
+                conditions.push(eq(uploadedFile.fileType, fileType));
             }
 
             if (sessionId) {
-                where.sessionId = sessionId;
+                conditions.push(eq(uploadedFile.sessionId, sessionId));
             }
 
             if (search) {
-                where.OR = [
-                    { fileName: { contains: search, mode: 'insensitive' } },
-                    { description: { contains: search, mode: 'insensitive' } },
-                    { content: { contains: search, mode: 'insensitive' } }
-                ];
+                conditions.push(
+                    or(
+                        like(uploadedFile.fileName, `%${search}%`),
+                        like(uploadedFile.description, `%${search}%`),
+                        like(uploadedFile.content, `%${search}%`)
+                    )!
+                );
             }
 
-            const [files, total] = await Promise.all([
-                prisma.uploadedFile.findMany({
-                    where,
-                    orderBy: { createdAt: 'desc' },
-                    skip,
-                    take: limit,
-                }),
-                prisma.uploadedFile.count({ where })
+            const whereClause = and(...conditions);
+
+            const [files, totalResult] = await Promise.all([
+                db.select()
+                    .from(uploadedFile)
+                    .where(whereClause)
+                    .orderBy(desc(uploadedFile.createdAt))
+                    .limit(limit)
+                    .offset(offset),
+                db.select({ count: count() })
+                    .from(uploadedFile)
+                    .where(whereClause)
             ]);
+
+            const total = totalResult[0]?.count || 0;
 
             return {
                 files,
@@ -290,8 +296,11 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                 userId = token !== 'undefined' && token !== 'null' ? token : 'default-user';
             }
 
-            const file = await prisma.uploadedFile.findFirst({
-                where: { id, userId }
+            const file = await db.query.uploadedFile.findFirst({
+                where: and(
+                    eq(uploadedFile.id, id),
+                    eq(uploadedFile.userId, userId)
+                )
             });
 
             if (!file) {
@@ -324,25 +333,33 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             }
 
             // Check if file exists and belongs to user
-            const existingFile = await prisma.uploadedFile.findFirst({
-                where: { id, userId }
+            const existingFile = await db.query.uploadedFile.findFirst({
+                where: and(
+                    eq(uploadedFile.id, id),
+                    eq(uploadedFile.userId, userId)
+                )
             });
 
             if (!existingFile) {
                 return reply.code(404).send({ error: 'File not found' });
             }
 
-            // Update file
-            const updatedFile = await prisma.uploadedFile.update({
-                where: { id },
-                data: {
-                    ...(description !== undefined && { description }),
-                    ...(tags !== undefined && { tags }),
-                    ...(analysis !== undefined && { analysis, isProcessed: true })
-                }
-            });
+            // Build update object
+            const updateData: any = {};
+            if (description !== undefined) updateData.description = description;
+            if (tags !== undefined) updateData.tags = tags;
+            if (analysis !== undefined) {
+                updateData.analysis = analysis;
+                updateData.isProcessed = true;
+            }
 
-            return updatedFile;
+            // Update file
+            const [updatedFileRecord] = await db.update(uploadedFile)
+                .set(updateData)
+                .where(eq(uploadedFile.id, id))
+                .returning();
+
+            return updatedFileRecord;
         } catch (error) {
             console.error('Error updating file:', error);
             return reply.code(500).send({
@@ -367,8 +384,11 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             }
 
             // Check if file exists and belongs to user
-            const existingFile = await prisma.uploadedFile.findFirst({
-                where: { id, userId }
+            const existingFile = await db.query.uploadedFile.findFirst({
+                where: and(
+                    eq(uploadedFile.id, id),
+                    eq(uploadedFile.userId, userId)
+                )
             });
 
             if (!existingFile) {
@@ -386,9 +406,8 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             }
 
             // Delete from database
-            await prisma.uploadedFile.delete({
-                where: { id }
-            });
+            await db.delete(uploadedFile)
+                .where(eq(uploadedFile.id, id));
 
             return { success: true, message: 'File deleted successfully' };
         } catch (error) {
@@ -413,23 +432,35 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             }
 
             const [
-                totalFiles,
-                processedFiles,
+                totalFilesResult,
+                processedFilesResult,
                 filesByType,
-                totalSize
+                totalSizeResult
             ] = await Promise.all([
-                prisma.uploadedFile.count({ where: { userId } }),
-                prisma.uploadedFile.count({ where: { userId, isProcessed: true } }),
-                prisma.uploadedFile.groupBy({
-                    by: ['fileType'],
-                    where: { userId },
-                    _count: { id: true }
-                }),
-                prisma.uploadedFile.aggregate({
-                    where: { userId },
-                    _sum: { fileSize: true }
+                db.select({ count: count() })
+                    .from(uploadedFile)
+                    .where(eq(uploadedFile.userId, userId)),
+                db.select({ count: count() })
+                    .from(uploadedFile)
+                    .where(and(
+                        eq(uploadedFile.userId, userId),
+                        eq(uploadedFile.isProcessed, true)
+                    )),
+                db.select({
+                    fileType: uploadedFile.fileType,
+                    count: count()
                 })
+                    .from(uploadedFile)
+                    .where(eq(uploadedFile.userId, userId))
+                    .groupBy(uploadedFile.fileType),
+                db.select({ totalSize: sum(uploadedFile.fileSize) })
+                    .from(uploadedFile)
+                    .where(eq(uploadedFile.userId, userId))
             ]);
+
+            const totalFiles = totalFilesResult[0]?.count || 0;
+            const processedFiles = processedFilesResult[0]?.count || 0;
+            const totalSizeBytes = Number(totalSizeResult[0]?.totalSize || 0);
 
             return {
                 totalFiles,
@@ -437,10 +468,10 @@ const fileRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                 unprocessedFiles: totalFiles - processedFiles,
                 filesByType: filesByType.map(ft => ({
                     type: ft.fileType,
-                    count: ft._count.id
+                    count: ft.count
                 })),
-                totalSizeBytes: totalSize._sum.fileSize || 0,
-                totalSizeMB: Math.round((totalSize._sum.fileSize || 0) / (1024 * 1024) * 100) / 100
+                totalSizeBytes,
+                totalSizeMB: Math.round(totalSizeBytes / (1024 * 1024) * 100) / 100
             };
         } catch (error) {
             console.error('Error fetching file stats:', error);

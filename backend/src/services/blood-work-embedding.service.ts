@@ -1,35 +1,23 @@
 import { AIService } from './ai.service';
-import { PineconeService } from './pinecone';
+import PgVectorService from './pgvector.service';
 import { BloodWorkRecord } from './blood-work.service';
-import { PrismaClient } from '@prisma/client';
+import { db } from '../db';
+import { bloodWorkRecord } from '../db/schema';
+import { eq } from 'drizzle-orm';
 
 export class BloodWorkEmbeddingService {
     private aiService: AIService;
-    private prisma: PrismaClient;
-    private readonly indexName = 'blood-work-data';
+    private readonly tableName = 'blood_work';
     private readonly embeddingDimension = 1536; // OpenAI embedding dimension
 
     constructor() {
         this.aiService = new AIService();
-        this.prisma = new PrismaClient();
     }
 
     async initialize() {
         try {
-            // Initialize Pinecone service
-            await PineconeService.initialize();
-
-            // Check if index exists, create if not
-            const indexes = await PineconeService.listIndexes();
-            const indexExists = indexes.includes(this.indexName);
-
-            if (!indexExists) {
-                console.log(`Creating Pinecone index: ${this.indexName}`);
-                await PineconeService.createIndex(this.indexName, this.embeddingDimension);
-                console.log('Blood work index created successfully');
-            } else {
-                console.log(`Pinecone index ${this.indexName} already exists`);
-            }
+            // pgvector tables are managed through Drizzle migrations
+            console.log('BloodWorkEmbeddingService initialized with pgvector');
         } catch (error) {
             console.error('Failed to initialize BloodWorkEmbeddingService:', error);
             throw error;
@@ -83,17 +71,17 @@ export class BloodWorkEmbeddingService {
             console.log(`Generating embeddings for ${textRepresentations.length} text segments`);
             const embeddings = await this.aiService.generateEmbeddings(textRepresentations);
 
-            // Prepare vectors for Pinecone
+            // Prepare vectors for pgvector
             const vectors = embeddings.map((embedding, index) => ({
                 id: `${userId}-${record.id}-${index}`,
                 values: embedding,
                 metadata: metadata[index]
             }));
 
-            // Store in Pinecone
-            await PineconeService.upsert(this.indexName, vectors);
+            // Store in pgvector
+            await PgVectorService.upsert(this.tableName, vectors);
 
-            console.log(`Successfully stored blood work record ${record.id} in Pinecone`);
+            console.log(`Successfully stored blood work record ${record.id} in pgvector`);
         } catch (error) {
             console.error('Error processing blood work record:', error);
             throw error;
@@ -200,9 +188,9 @@ export class BloodWorkEmbeddingService {
             // Generate embedding for query
             const queryEmbedding = await this.aiService.generateEmbeddings([query]);
 
-            // Query Pinecone with user filter
-            const results = await PineconeService.query(
-                this.indexName,
+            // Query pgvector with user filter
+            const results = await PgVectorService.query(
+                this.tableName,
                 queryEmbedding[0],
                 topK,
                 { userId: { $eq: userId } }
@@ -276,8 +264,8 @@ export class BloodWorkEmbeddingService {
     async deleteRecordVectors(recordId: string, userId: string) {
         try {
             // Query for all vectors related to this record
-            const queryResults = await PineconeService.query(
-                this.indexName,
+            const queryResults = await PgVectorService.query(
+                this.tableName,
                 new Array(this.embeddingDimension).fill(0), // Dummy vector
                 100, // Get more results to find all related vectors
                 {
@@ -288,7 +276,7 @@ export class BloodWorkEmbeddingService {
 
             if (queryResults.matches && queryResults.matches.length > 0) {
                 const idsToDelete = queryResults.matches.map((match: any) => match.id);
-                await PineconeService.delete(this.indexName, idsToDelete);
+                await PgVectorService.delete(this.tableName, idsToDelete);
                 console.log(`Deleted ${idsToDelete.length} vectors for record ${recordId}`);
             }
         } catch (error) {
@@ -304,10 +292,10 @@ export class BloodWorkEmbeddingService {
         try {
             console.log(`Re-processing all blood work for user ${userId}`);
 
-            // Query blood work records directly from database
-            const dbRecords = await this.prisma.bloodWorkRecord.findMany({
-                where: { userId },
-                include: { values: true }
+            // Query blood work records directly from database using Drizzle
+            const dbRecords = await db.query.bloodWorkRecord.findMany({
+                where: eq(bloodWorkRecord.userId, userId),
+                with: { values: true }
             });
 
             // Convert to BloodWorkRecord format
@@ -335,4 +323,4 @@ export class BloodWorkEmbeddingService {
             throw error;
         }
     }
-} 
+}

@@ -1,4 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+// Note: Migrated from Prisma to Drizzle ORM
+// Currently using in-memory storage as DiabetesProfile table is not yet defined in schema
+// Future: Add diabetesProfile table to backend/src/db/schema.ts and implement database operations
 
 export interface DiabetesProfile {
     userId: string;
@@ -17,11 +19,9 @@ export interface DiabetesProfile {
 }
 
 export class UserProfileService {
-    private prisma: PrismaClient;
     private defaultProfiles: Map<string, DiabetesProfile> = new Map();
 
     constructor() {
-        this.prisma = new PrismaClient();
         this.initializeDefaultProfiles();
     }
 

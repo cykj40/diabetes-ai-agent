@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { db, bloodWorkRecord, bloodWorkValue } from '../db';
+import { eq, desc, and, ilike } from 'drizzle-orm';
 import { BloodWorkEmbeddingService } from './blood-work-embedding.service';
 
 export interface BloodWorkValue {
@@ -21,11 +22,9 @@ export interface BloodWorkRecord {
 }
 
 export class BloodWorkService {
-    private prisma: PrismaClient;
     private embeddingService: BloodWorkEmbeddingService;
 
     constructor() {
-        this.prisma = new PrismaClient();
         this.embeddingService = new BloodWorkEmbeddingService();
     }
 
@@ -79,31 +78,34 @@ export class BloodWorkService {
         }
 
         // Save to database
-        const record = await this.prisma.bloodWorkRecord.create({
-            data: {
-                userId,
-                name: fileName.replace('.csv', '').replace(/[_-]/g, ' '),
-                date: new Date(),
-                fileName,
-                fileType: 'csv',
-                values: {
-                    create: values.map(v => ({
-                        name: v.name,
-                        value: v.value.toString(),
-                        numericValue: typeof v.value === 'number' ? v.value : parseFloat(v.value.toString()) || null,
-                        unit: v.unit,
-                        normalRange: v.normalRange,
-                        isAbnormal: v.isAbnormal,
-                        category: v.category
-                    }))
-                }
-            },
-            include: {
-                values: true
-            }
-        });
+        const [record] = await db.insert(bloodWorkRecord).values({
+            userId,
+            name: fileName.replace('.csv', '').replace(/[_-]/g, ' '),
+            date: new Date(),
+            fileName,
+            fileType: 'csv',
+        }).returning();
 
-        const formattedRecord = this.formatRecord(record);
+        // Insert blood work values
+        const insertedValues = await db.insert(bloodWorkValue).values(
+            values.map(v => ({
+                recordId: record.id,
+                name: v.name,
+                value: v.value.toString(),
+                numericValue: typeof v.value === 'number' ? v.value : parseFloat(v.value.toString()) || null,
+                unit: v.unit,
+                normalRange: v.normalRange || null,
+                isAbnormal: v.isAbnormal || null,
+                category: v.category || null
+            }))
+        ).returning();
+
+        const recordWithValues = {
+            ...record,
+            values: insertedValues
+        };
+
+        const formattedRecord = this.formatRecord(recordWithValues);
 
         // Also store in Pinecone for semantic search
         try {
@@ -143,31 +145,34 @@ export class BloodWorkService {
         }
 
         // Save to database
-        const record = await this.prisma.bloodWorkRecord.create({
-            data: {
-                userId,
-                name: fileName.replace('.pdf', '').replace(/[_-]/g, ' '),
-                date: new Date(),
-                fileName,
-                fileType: 'pdf',
-                values: {
-                    create: values.map(v => ({
-                        name: v.name,
-                        value: v.value.toString(),
-                        numericValue: typeof v.value === 'number' ? v.value : parseFloat(v.value.toString()) || null,
-                        unit: v.unit,
-                        normalRange: v.normalRange,
-                        isAbnormal: v.isAbnormal,
-                        category: v.category
-                    }))
-                }
-            },
-            include: {
-                values: true
-            }
-        });
+        const [record] = await db.insert(bloodWorkRecord).values({
+            userId,
+            name: fileName.replace('.pdf', '').replace(/[_-]/g, ' '),
+            date: new Date(),
+            fileName,
+            fileType: 'pdf',
+        }).returning();
 
-        const formattedRecord = this.formatRecord(record);
+        // Insert blood work values
+        const insertedValues = await db.insert(bloodWorkValue).values(
+            values.map(v => ({
+                recordId: record.id,
+                name: v.name,
+                value: v.value.toString(),
+                numericValue: typeof v.value === 'number' ? v.value : parseFloat(v.value.toString()) || null,
+                unit: v.unit,
+                normalRange: v.normalRange || null,
+                isAbnormal: v.isAbnormal || null,
+                category: v.category || null
+            }))
+        ).returning();
+
+        const recordWithValues = {
+            ...record,
+            values: insertedValues
+        };
+
+        const formattedRecord = this.formatRecord(recordWithValues);
 
         // Also store in Pinecone for semantic search
         try {
@@ -268,10 +273,10 @@ export class BloodWorkService {
      * Get all records for a user
      */
     async getAllRecords(userId: string = 'default-user'): Promise<BloodWorkRecord[]> {
-        const records = await this.prisma.bloodWorkRecord.findMany({
-            where: { userId },
-            include: { values: true },
-            orderBy: { date: 'desc' }
+        const records = await db.query.bloodWorkRecord.findMany({
+            where: eq(bloodWorkRecord.userId, userId),
+            with: { values: true },
+            orderBy: [desc(bloodWorkRecord.date)]
         });
 
         return records.map(record => this.formatRecord(record));
@@ -281,9 +286,12 @@ export class BloodWorkService {
      * Get record by ID
      */
     async getRecord(id: string, userId: string = 'default-user'): Promise<BloodWorkRecord | null> {
-        const record = await this.prisma.bloodWorkRecord.findFirst({
-            where: { id, userId },
-            include: { values: true }
+        const record = await db.query.bloodWorkRecord.findFirst({
+            where: and(
+                eq(bloodWorkRecord.id, id),
+                eq(bloodWorkRecord.userId, userId)
+            ),
+            with: { values: true }
         });
 
         return record ? this.formatRecord(record) : null;
@@ -293,29 +301,27 @@ export class BloodWorkService {
      * Search records by test name
      */
     async searchRecords(testName: string, userId: string = 'default-user', includeAbnormalOnly: boolean = false): Promise<any[]> {
-        const whereClause: any = {
-            record: { userId },
-            name: {
-                contains: testName,
-                mode: 'insensitive'
-            }
-        };
+        const conditions = [
+            ilike(bloodWorkValue.name, `%${testName}%`)
+        ];
 
         if (includeAbnormalOnly) {
-            whereClause.isAbnormal = true;
+            conditions.push(eq(bloodWorkValue.isAbnormal, true));
         }
 
-        const values = await this.prisma.bloodWorkValue.findMany({
-            where: whereClause,
-            include: {
+        const values = await db.query.bloodWorkValue.findMany({
+            where: and(...conditions),
+            with: {
                 record: true
             },
-            orderBy: { createdAt: 'desc' }
+            orderBy: [desc(bloodWorkValue.createdAt)]
         });
 
-        // Group by record
+        // Filter by userId from record and group by record
         const recordsMap = new Map();
         values.forEach(value => {
+            if (value.record.userId !== userId) return;
+
             const recordId = value.record.id;
             if (!recordsMap.has(recordId)) {
                 recordsMap.set(recordId, {
@@ -342,57 +348,55 @@ export class BloodWorkService {
      * Get records by category (e.g., 'diabetes', 'cholesterol')
      */
     async getRecordsByCategory(category: string, userId: string = 'default-user'): Promise<any[]> {
-        const values = await this.prisma.bloodWorkValue.findMany({
-            where: {
-                record: { userId },
-                category
-            },
-            include: {
+        const values = await db.query.bloodWorkValue.findMany({
+            where: eq(bloodWorkValue.category, category),
+            with: {
                 record: true
             },
-            orderBy: { createdAt: 'desc' }
+            orderBy: [desc(bloodWorkValue.createdAt)]
         });
 
-        return values.map(value => ({
-            recordId: value.record.id,
-            recordName: value.record.name,
-            recordDate: value.record.date.toISOString().split('T')[0],
-            testName: value.name,
-            value: value.numericValue || value.value,
-            unit: value.unit,
-            normalRange: value.normalRange,
-            isAbnormal: value.isAbnormal,
-            category: value.category
-        }));
+        // Filter by userId from record
+        return values
+            .filter(value => value.record.userId === userId)
+            .map(value => ({
+                recordId: value.record.id,
+                recordName: value.record.name,
+                recordDate: value.record.date.toISOString().split('T')[0],
+                testName: value.name,
+                value: value.numericValue || value.value,
+                unit: value.unit,
+                normalRange: value.normalRange,
+                isAbnormal: value.isAbnormal,
+                category: value.category
+            }));
     }
 
     /**
      * Get recent values for a specific test
      */
     async getRecentTestValues(testName: string, userId: string = 'default-user', limit: number = 10): Promise<any[]> {
-        const values = await this.prisma.bloodWorkValue.findMany({
-            where: {
-                record: { userId },
-                name: {
-                    contains: testName,
-                    mode: 'insensitive'
-                }
-            },
-            include: {
+        const values = await db.query.bloodWorkValue.findMany({
+            where: ilike(bloodWorkValue.name, `%${testName}%`),
+            with: {
                 record: true
             },
-            orderBy: { record: { date: 'desc' } },
-            take: limit
+            orderBy: [desc(bloodWorkValue.createdAt)],
+            limit
         });
 
-        return values.map(value => ({
-            date: value.record.date.toISOString().split('T')[0],
-            value: value.numericValue || value.value,
-            unit: value.unit,
-            normalRange: value.normalRange,
-            isAbnormal: value.isAbnormal,
-            recordName: value.record.name
-        }));
+        // Filter by userId from record and sort by record date
+        return values
+            .filter(value => value.record.userId === userId)
+            .slice(0, limit)
+            .map(value => ({
+                date: value.record.date.toISOString().split('T')[0],
+                value: value.numericValue || value.value,
+                unit: value.unit,
+                normalRange: value.normalRange,
+                isAbnormal: value.isAbnormal,
+                recordName: value.record.name
+            }));
     }
 
     /**
@@ -400,12 +404,13 @@ export class BloodWorkService {
      */
     async deleteRecord(id: string, userId: string = 'default-user'): Promise<boolean> {
         try {
-            await this.prisma.bloodWorkRecord.delete({
-                where: {
-                    id,
-                    userId
-                }
-            });
+            await db.delete(bloodWorkRecord)
+                .where(
+                    and(
+                        eq(bloodWorkRecord.id, id),
+                        eq(bloodWorkRecord.userId, userId)
+                    )
+                );
             return true;
         } catch (error) {
             console.error('Error deleting blood work record:', error);

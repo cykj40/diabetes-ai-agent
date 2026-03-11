@@ -6,11 +6,9 @@ import { DexcomService } from '../services/dexcom.service';
 import { DiabetesAgent } from '../services/diabetes-agent';
 import { AgentService } from '../services/agent.service';
 import { formatDexcomDate, generateMockReadings, debouncedProcessReadings } from '../server';
-import { PrismaClient } from '@prisma/client';
 import { BaseMessage } from '@langchain/core/messages';
-
-// Create a Prisma client instance
-const prisma = new PrismaClient();
+import { db, chatSession, chatMessage } from '../db';
+import { eq, desc, sql, and } from 'drizzle-orm';
 
 // Define route parameter types
 interface ChatParams {
@@ -297,17 +295,27 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
 
             // Ensure ChatSession exists for this sessionId before calling DiabetesAgent
             try {
-                await prisma.chatSession.upsert({
-                    where: { id: sessionId },
-                    update: { updatedAt: new Date() },
-                    create: {
-                        id: sessionId,
-                        userId: userId,
-                        title: 'Diabetes AI Chat',
-                        createdAt: new Date(),
-                        updatedAt: new Date()
-                    }
+                // Check if session exists
+                const existingSession = await db.query.chatSession.findFirst({
+                    where: eq(chatSession.id, sessionId)
                 });
+
+                if (existingSession) {
+                    // Update existing session
+                    await db.update(chatSession)
+                        .set({ updatedAt: new Date() })
+                        .where(eq(chatSession.id, sessionId));
+                } else {
+                    // Create new session
+                    await db.insert(chatSession)
+                        .values({
+                            id: sessionId,
+                            userId: userId,
+                            title: 'Diabetes AI Chat',
+                            createdAt: new Date(),
+                            updatedAt: new Date()
+                        });
+                }
             } catch (sessionError) {
                 console.log('Session creation/update failed, continuing anyway:', sessionError);
             }
@@ -354,14 +362,12 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
         try {
             const userId = extractUserId(request);
 
-            const sessions = await prisma.chatSession.findMany({
-                where: { userId },
-                orderBy: { updatedAt: 'desc' },
-                take: 20, // Get up to 20 sessions
-                include: {
-                    _count: {
-                        select: { messages: true }
-                    }
+            const sessions = await db.query.chatSession.findMany({
+                where: eq(chatSession.userId, userId),
+                orderBy: [desc(chatSession.updatedAt)],
+                limit: 20, // Get up to 20 sessions
+                with: {
+                    messages: true
                 }
             });
 
@@ -369,7 +375,7 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                 id: session.id,
                 title: session.title || 'New Conversation',
                 timestamp: session.updatedAt.toISOString(),
-                messageCount: session._count.messages,
+                messageCount: session.messages.length,
                 createdAt: session.createdAt.toISOString(),
                 updatedAt: session.updatedAt.toISOString()
             }));
@@ -396,12 +402,12 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
                 });
             }
 
-            const newSession = await prisma.chatSession.create({
-                data: {
+            const [newSession] = await db.insert(chatSession)
+                .values({
                     userId,
                     title
-                }
-            });
+                })
+                .returning();
 
             return {
                 id: newSession.id,
@@ -425,25 +431,23 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             const userId = extractUserId(request);
             console.log('Fetching recent sessions for userId:', userId);
 
-            const sessions = await prisma.chatSession.findMany({
-                where: { userId },
-                orderBy: { updatedAt: 'desc' },
-                take: 5, // Only get 5 most recent
-                include: {
-                    _count: {
-                        select: { messages: true }
-                    }
+            const sessions = await db.query.chatSession.findMany({
+                where: eq(chatSession.userId, userId),
+                orderBy: [desc(chatSession.updatedAt)],
+                limit: 5, // Only get 5 most recent
+                with: {
+                    messages: true
                 }
             });
 
             console.log('Found sessions:', sessions.length);
-            console.log('Sessions details:', sessions.map(s => ({ id: s.id, title: s.title, userId: s.userId, messageCount: s._count.messages })));
+            console.log('Sessions details:', sessions.map(s => ({ id: s.id, title: s.title, userId: s.userId, messageCount: s.messages.length })));
 
             const formattedSessions = sessions.map(session => ({
                 id: session.id,
                 title: session.title || 'New Conversation',
                 timestamp: session.updatedAt.toISOString(),
-                messageCount: session._count.messages
+                messageCount: session.messages.length
             }));
 
             console.log('Returning formatted sessions:', formattedSessions);
@@ -464,21 +468,35 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             const { sessionId } = request.params as { sessionId: string };
             const { title } = request.body as { title: string };
 
-            // Use upsert to create the session if it doesn't exist
-            const session = await prisma.chatSession.upsert({
-                where: { id: sessionId },
-                update: {
-                    title,
-                    updatedAt: new Date()
-                },
-                create: {
-                    id: sessionId,
-                    userId,
-                    title,
-                    createdAt: new Date(),
-                    updatedAt: new Date()
-                }
+            // Check if session exists
+            const existingSession = await db.query.chatSession.findFirst({
+                where: eq(chatSession.id, sessionId)
             });
+
+            let session;
+            if (existingSession) {
+                // Update existing session
+                const [updated] = await db.update(chatSession)
+                    .set({
+                        title,
+                        updatedAt: new Date()
+                    })
+                    .where(eq(chatSession.id, sessionId))
+                    .returning();
+                session = updated;
+            } else {
+                // Create new session
+                const [created] = await db.insert(chatSession)
+                    .values({
+                        id: sessionId,
+                        userId,
+                        title,
+                        createdAt: new Date(),
+                        updatedAt: new Date()
+                    })
+                    .returning();
+                session = created;
+            }
 
             return {
                 success: true,
@@ -506,14 +524,14 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             const { sessionId } = request.params as { sessionId: string };
 
             // Delete the session and all its messages (cascade should handle this)
-            const deletedSession = await prisma.chatSession.deleteMany({
-                where: {
-                    id: sessionId,
-                    userId // Ensure user owns this session
-                }
-            });
+            const deletedSession = await db.delete(chatSession)
+                .where(and(
+                    eq(chatSession.id, sessionId),
+                    eq(chatSession.userId, userId) // Ensure user owns this session
+                ))
+                .returning();
 
-            if (deletedSession.count === 0) {
+            if (deletedSession.length === 0) {
                 return reply.code(404).send({ error: 'Session not found' });
             }
 
@@ -533,9 +551,9 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             const { sessionId = 'default' } = request.params;
 
             // Get the chat history from the database using just sessionId (to match DiabetesAgent format)
-            const messages = await prisma.chatMessage.findMany({
-                where: { sessionId },
-                orderBy: { timestamp: 'asc' },
+            const messages = await db.query.chatMessage.findMany({
+                where: eq(chatMessage.sessionId, sessionId),
+                orderBy: [(chatMessage) => chatMessage.timestamp],
             });
 
             // Format messages for the frontend
@@ -566,14 +584,14 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             const { message, type, timestamp } = request.body as { message: string, type: 'human' | 'ai', timestamp: string };
 
             // Save the message to the database
-            const savedMessage = await prisma.chatMessage.create({
-                data: {
+            const [savedMessage] = await db.insert(chatMessage)
+                .values({
                     sessionId,
                     content: message,
                     type,
                     timestamp: new Date(timestamp)
-                }
-            });
+                })
+                .returning();
 
             return {
                 success: true,
@@ -595,9 +613,8 @@ const aiRoutes: FastifyPluginAsyncTypebox = async (fastify) => {
             const { sessionId = 'default' } = request.params;
 
             // Delete all messages for this session using just sessionId (to match DiabetesAgent format)
-            await prisma.chatMessage.deleteMany({
-                where: { sessionId },
-            });
+            await db.delete(chatMessage)
+                .where(eq(chatMessage.sessionId, sessionId));
 
             return { success: true, message: 'Chat history cleared successfully' };
         } catch (error) {

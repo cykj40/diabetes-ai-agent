@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client';
+import { db, pelotonIntegration } from '../db';
+import { eq } from 'drizzle-orm';
 import { PelotonClient, getPelotonSessionCookie } from '../tools/peloton/pelotonClient';
-
-const prisma = new PrismaClient();
 
 /**
  * Gets a valid Peloton session cookie for a user
@@ -11,8 +10,8 @@ const prisma = new PrismaClient();
 export async function getUserPelotonSessionCookie(userId: string): Promise<string | null> {
     try {
         // Check if we have a stored integration for this user
-        let integration = await prisma.pelotonIntegration.findUnique({
-            where: { userId }
+        let integration = await db.query.pelotonIntegration.findFirst({
+            where: eq(pelotonIntegration.userId, userId)
         });
 
         // If we have a stored session cookie, test if it's still valid
@@ -27,10 +26,9 @@ export async function getUserPelotonSessionCookie(userId: string): Promise<strin
                 console.log(`Stored Peloton session cookie is valid for user ${userId}`);
 
                 // Update the lastUpdated timestamp
-                await prisma.pelotonIntegration.update({
-                    where: { userId },
-                    data: { lastUpdated: new Date() }
-                });
+                await db.update(pelotonIntegration)
+                    .set({ lastUpdated: new Date() })
+                    .where(eq(pelotonIntegration.userId, userId));
 
                 return integration.sessionCookie;
             }
@@ -56,14 +54,13 @@ export async function getUserPelotonSessionCookie(userId: string): Promise<strin
 
                 if (freshCookie) {
                     // Update the integration with the new session cookie
-                    await prisma.pelotonIntegration.update({
-                        where: { userId },
-                        data: {
+                    await db.update(pelotonIntegration)
+                        .set({
                             sessionCookie: freshCookie,
                             isActive: true,
                             lastUpdated: new Date()
-                        }
-                    });
+                        })
+                        .where(eq(pelotonIntegration.userId, userId));
 
                     console.log(`Successfully obtained and stored new Peloton session cookie for user ${userId}`);
                     return freshCookie;
@@ -115,24 +112,33 @@ export async function savePelotonCredentials(
                 return false;
             }
 
-            // Save or update the integration
-            await prisma.pelotonIntegration.upsert({
-                where: { userId },
-                update: {
-                    username,
-                    password,
-                    sessionCookie,
-                    isActive: true,
-                    lastUpdated: new Date()
-                },
-                create: {
-                    userId,
-                    username,
-                    password,
-                    sessionCookie,
-                    isActive: true
-                }
+            // Check if integration exists for this user
+            const existingIntegration = await db.query.pelotonIntegration.findFirst({
+                where: eq(pelotonIntegration.userId, userId)
             });
+
+            if (existingIntegration) {
+                // Update existing integration
+                await db.update(pelotonIntegration)
+                    .set({
+                        username,
+                        password,
+                        sessionCookie,
+                        isActive: true,
+                        lastUpdated: new Date()
+                    })
+                    .where(eq(pelotonIntegration.userId, userId));
+            } else {
+                // Create new integration
+                await db.insert(pelotonIntegration)
+                    .values({
+                        userId,
+                        username,
+                        password,
+                        sessionCookie,
+                        isActive: true
+                    });
+            }
 
             console.log(`Successfully saved Peloton credentials for user ${userId}`);
             return true;
@@ -156,8 +162,8 @@ export async function savePelotonCredentials(
  */
 export async function refreshPelotonSessionCookie(userId: string): Promise<string | null> {
     try {
-        const integration = await prisma.pelotonIntegration.findUnique({
-            where: { userId }
+        const integration = await db.query.pelotonIntegration.findFirst({
+            where: eq(pelotonIntegration.userId, userId)
         });
 
         if (!integration?.username || !integration?.password) {
@@ -181,14 +187,13 @@ export async function refreshPelotonSessionCookie(userId: string): Promise<strin
 
             if (freshCookie) {
                 // Update the integration with the new session cookie
-                await prisma.pelotonIntegration.update({
-                    where: { userId },
-                    data: {
+                await db.update(pelotonIntegration)
+                    .set({
                         sessionCookie: freshCookie,
                         isActive: true,
                         lastUpdated: new Date()
-                    }
-                });
+                    })
+                    .where(eq(pelotonIntegration.userId, userId));
 
                 console.log(`Successfully refreshed Peloton session cookie for user ${userId}`);
                 return freshCookie;
@@ -215,9 +220,8 @@ export async function refreshPelotonSessionCookie(userId: string): Promise<strin
  */
 export async function deletePelotonIntegration(userId: string): Promise<boolean> {
     try {
-        await prisma.pelotonIntegration.delete({
-            where: { userId }
-        });
+        await db.delete(pelotonIntegration)
+            .where(eq(pelotonIntegration.userId, userId));
 
         console.log(`Successfully deleted Peloton integration for user ${userId}`);
         return true;
@@ -225,4 +229,4 @@ export async function deletePelotonIntegration(userId: string): Promise<boolean>
         console.error(`Error deleting Peloton integration for user ${userId}:`, error);
         return false;
     }
-} 
+}

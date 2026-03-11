@@ -1,7 +1,8 @@
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import { UserProfileService } from "../../services/user-profile.service";
-import { PrismaClient } from '@prisma/client';
+import { db } from '../../db';
+import { eq } from 'drizzle-orm';
 
 interface InsulinDose {
     id: string;
@@ -19,7 +20,6 @@ interface InsulinDose {
  */
 export function trackInsulinOnBoardTool(userId: string): DynamicStructuredTool {
     const userProfileService = new UserProfileService();
-    const prisma = new PrismaClient();
 
     return new DynamicStructuredTool({
         name: "track_insulin_on_board",
@@ -55,7 +55,8 @@ export function trackInsulinOnBoardTool(userId: string): DynamicStructuredTool {
                     console.log(`Description: ${description || 'No description'}, Time: ${timestamp.toLocaleString()}`);
 
                     // Mock database storage
-                    // In a real implementation, this would use Prisma to store to the database
+                    // In a real implementation, this would use Drizzle to store to the database
+                    // Example: await db.insert(insulinDose).values({ userId, units, insulinType, timestamp, description }).returning();
                     const newDose = {
                         id: Date.now().toString(),
                         userId,
@@ -144,4 +145,4 @@ export function trackInsulinOnBoardTool(userId: string): DynamicStructuredTool {
             }
         },
     });
-} 
+}

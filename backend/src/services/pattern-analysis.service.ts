@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import { db, bloodSugarReading } from '../db';
+import { eq, gte, desc, and } from 'drizzle-orm';
 import { DexcomReading, DexcomService } from './dexcom.service';
 import crypto from 'crypto';
 
@@ -22,42 +23,25 @@ interface PatternAnalysis {
 }
 
 export class PatternAnalysisService {
-    private prisma: PrismaClient;
     private dexcomService: DexcomService;
 
     constructor() {
-        this.prisma = new PrismaClient();
         this.dexcomService = new DexcomService();
     }
 
     async storeReading(reading: DexcomReading, sessionId: string, userId: string = 'default-user'): Promise<void> {
         try {
-            // Try to create the reading with userId
-            try {
-                await this.prisma.bloodSugarReading.create({
-                    data: {
-                        sessionId,
-                        userId,
-                        value: reading.value,
-                        trend: reading.trend,
-                        timestamp: new Date(reading.timestamp),
-                    },
-                });
-            } catch (error: any) {
-                // If the error is about the userId column not existing, try without it
-                if (error.message && error.message.includes('column "userId" does not exist')) {
-                    console.log('The userId column does not exist in the BloodSugarReading table. Using simplified schema.');
-
-                    // Use a raw query to insert without userId
-                    await this.prisma.$executeRaw`
-                        INSERT INTO "BloodSugarReading" ("id", "sessionId", "value", "trend", "timestamp", "analyzed", "isEmbedded")
-                        VALUES (${crypto.randomUUID()}, ${sessionId}, ${reading.value}, ${reading.trend}, ${new Date(reading.timestamp)}, false, false)
-                    `;
-                } else {
-                    // Re-throw other errors
-                    throw error;
-                }
-            }
+            // Insert the reading with userId
+            await db.insert(bloodSugarReading).values({
+                id: crypto.randomUUID(),
+                sessionId,
+                userId,
+                value: reading.value,
+                trend: reading.trend,
+                timestamp: new Date(reading.timestamp),
+                analyzed: false,
+                isEmbedded: false,
+            });
         } catch (error) {
             console.error('Error storing reading in database:', error);
             // Don't throw the error, just log it and continue
@@ -69,17 +53,16 @@ export class PatternAnalysisService {
         startDate.setDate(startDate.getDate() - days);
 
         // First try to get readings from the database
-        const readings = await this.prisma.bloodSugarReading.findMany({
-            where: {
-                sessionId,
-                timestamp: {
-                    gte: startDate,
-                },
-            },
-            orderBy: {
-                timestamp: 'asc',
-            },
-        });
+        const readings = await db
+            .select()
+            .from(bloodSugarReading)
+            .where(
+                and(
+                    eq(bloodSugarReading.sessionId, sessionId),
+                    gte(bloodSugarReading.timestamp, startDate)
+                )
+            )
+            .orderBy(bloodSugarReading.timestamp);
 
         // If no readings in database, try to get them directly from Dexcom
         let allReadings: any[] = readings;
@@ -133,17 +116,16 @@ export class PatternAnalysisService {
         startDate.setDate(startDate.getDate() - 7);
 
         // First try to get readings from the database
-        const readings = await this.prisma.bloodSugarReading.findMany({
-            where: {
-                sessionId,
-                timestamp: {
-                    gte: startDate,
-                },
-            },
-            orderBy: {
-                timestamp: 'asc',
-            },
-        });
+        const readings = await db
+            .select()
+            .from(bloodSugarReading)
+            .where(
+                and(
+                    eq(bloodSugarReading.sessionId, sessionId),
+                    gte(bloodSugarReading.timestamp, startDate)
+                )
+            )
+            .orderBy(bloodSugarReading.timestamp);
 
         // If no readings in database, try to get them directly from Dexcom
         let allReadings: any[] = readings;

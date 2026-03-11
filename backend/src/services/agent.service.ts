@@ -1,11 +1,10 @@
 import { v4 as uuidv4 } from 'uuid';
 import { ChatOpenAI } from '@langchain/openai';
 import axios from 'axios';
-import { PrismaClient } from '@prisma/client';
+import { db, uploadedFile } from '../db';
+import { eq, desc, and } from 'drizzle-orm';
 import { BloodSugarEmbeddingService } from './blood-sugar-embedding.service';
 import { DexcomService } from './dexcom.service';
-
-const prisma = new PrismaClient();
 
 export type Message = {
     id?: string;
@@ -119,14 +118,17 @@ export class AgentService {
             // Check for uploaded files in the current session
             let sessionFiles: any[] = [];
             try {
-                sessionFiles = await prisma.uploadedFile.findMany({
-                    where: {
-                        userId: userId,
-                        sessionId: currentSessionId
-                    },
-                    orderBy: { createdAt: 'desc' },
-                    take: 10 // Limit to recent files
-                });
+                sessionFiles = await db
+                    .select()
+                    .from(uploadedFile)
+                    .where(
+                        and(
+                            eq(uploadedFile.userId, userId),
+                            eq(uploadedFile.sessionId, currentSessionId)
+                        )
+                    )
+                    .orderBy(desc(uploadedFile.createdAt))
+                    .limit(10); // Limit to recent files
             } catch (error) {
                 console.error('Error fetching session files:', error);
             }

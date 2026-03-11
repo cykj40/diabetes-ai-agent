@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { Issuer, Client, generators, TokenSet } from 'openid-client';
-import { PrismaClient } from '@prisma/client';
+import { db, dexcomToken } from '../db';
+import { eq } from 'drizzle-orm';
 
 export interface DexcomReading {
     value: number;
@@ -177,7 +178,6 @@ export class DexcomService {
     private readonly redirectUri: string;
     private client: Client | null = null;
     private tokenSet: TokenSet | null = null;
-    private prisma: PrismaClient;
     private userId: string = 'default-user'; // We'll use a default user ID for now
 
     constructor() {
@@ -186,7 +186,6 @@ export class DexcomService {
         this.clientSecret = process.env.DEXCOM_CLIENT_SECRET || '';
         this.redirectUri = process.env.DEXCOM_REDIRECT_URI || '';
         this.tokenSet = null;
-        this.prisma = new PrismaClient();
         this.initializeClient();
         this.loadTokenFromDatabase();
     }
@@ -194,8 +193,8 @@ export class DexcomService {
     private async loadTokenFromDatabase() {
         try {
             console.log('Attempting to load token from database for user:', this.userId);
-            const tokenRecord = await this.prisma.dexcomToken.findUnique({
-                where: { userId: this.userId }
+            const tokenRecord = await db.query.dexcomToken.findFirst({
+                where: eq(dexcomToken.userId, this.userId),
             });
 
             if (tokenRecord) {
@@ -227,20 +226,30 @@ export class DexcomService {
         try {
             const expiresAt = new Date(this.tokenSet.expires_at! * 1000);
 
-            await this.prisma.dexcomToken.upsert({
-                where: { userId: this.userId },
-                update: {
-                    accessToken: this.tokenSet.access_token!,
-                    refreshToken: this.tokenSet.refresh_token!,
-                    expiresAt
-                },
-                create: {
+            // Check if token exists
+            const existingToken = await db.query.dexcomToken.findFirst({
+                where: eq(dexcomToken.userId, this.userId),
+            });
+
+            if (existingToken) {
+                // Update existing token
+                await db
+                    .update(dexcomToken)
+                    .set({
+                        accessToken: this.tokenSet.access_token!,
+                        refreshToken: this.tokenSet.refresh_token!,
+                        expiresAt,
+                    })
+                    .where(eq(dexcomToken.userId, this.userId));
+            } else {
+                // Insert new token
+                await db.insert(dexcomToken).values({
                     userId: this.userId,
                     accessToken: this.tokenSet.access_token!,
                     refreshToken: this.tokenSet.refresh_token!,
-                    expiresAt
-                }
-            });
+                    expiresAt,
+                });
+            }
 
             console.log('Saved token to database');
         } catch (error) {
@@ -432,9 +441,7 @@ export class DexcomService {
 
     private async clearTokenFromDatabase() {
         try {
-            await this.prisma.dexcomToken.delete({
-                where: { userId: this.userId }
-            });
+            await db.delete(dexcomToken).where(eq(dexcomToken.userId, this.userId));
             console.log('Cleared invalid token from database');
         } catch (error) {
             console.error('Failed to clear token from database:', error);
